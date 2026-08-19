@@ -44,6 +44,61 @@
     /ready to join/i,
     /language\s+(english|hindi|spanish|french|german)/i,
     /ask to join|join now/i,
+
+    // In-call UI controls, buttons & tooltips that are NOT speech
+    /raise hand/i,
+    /lower hand/i,
+    /emoji reaction/i,
+    /jump to the (bottom|top)/i,
+    /scroll to (bottom|top)/i,
+    /background colou?r/i,
+    /blur (your|my)? background/i,
+    /virtual background/i,
+    /more effects/i,
+    /apply (visual )?effect/i,
+    /open chat/i,
+    /close chat/i,
+    /chat with everyone/i,
+    /host controls/i,
+    /manage participants/i,
+    /view participants/i,
+    /screen (share|sharing)/i,
+    /share (your|my)? screen/i,
+    /stop sharing/i,
+    /breakout room/i,
+    /whiteboard/i,
+    /poll(s)?/i,
+    /q(&amp;|\s*&\s*|\s+and\s+)a/i,
+    /activities/i,
+    /settings/i,
+    /network (quality|status)/i,
+    /full screen/i,
+    /exit full screen/i,
+    /minimise|maximize/i,
+    /grid (view|layout)/i,
+    /spotlight/i,
+    /pin (participant|video)/i,
+    /unpin/i,
+    /remove from (call|meeting)/i,
+    /admit|deny/i,
+    /mute (all|everyone|participant)/i,
+    /copy (link|invite)/i,
+    /invite (people|more)/i,
+    /meeting (details|info)/i,
+    /locked meeting/i,
+    /noise cancel/i,
+    /audio settings/i,
+    /video settings/i,
+    /go back/i,
+    /close panel/i,
+    /open panel/i,
+    /send (a )?message/i,
+    /type a message/i,
+    /report (a )?problem/i,
+    /help/i,
+    /google workspace/i,
+    /default$/i,
+    /^(default|none|blur)$/i,
   ];
 
   const CAPTION_SELECTORS = {
@@ -281,15 +336,19 @@
     }
 
     _isInCall() {
-      // Check for active in-call controls (leave call button, mic/camera controls)
-      const inCallElem = document.querySelector('button[aria-label*="Leave call" i], button[aria-label*="Hang up" i], button[jsname="CQlyd"], button[aria-label*="microphone" i], button[aria-label*="camera" i]');
-      if (inCallElem && inCallElem.offsetWidth > 0) return true;
+      // The ONLY reliable indicator of an active call is the "Leave call" / "End call" / "Hang up" button.
+      // Microphone & camera buttons also exist on the pre-call waiting room screen, so we MUST NOT use those.
+      const leaveBtn = document.querySelector(
+        'button[aria-label*="Leave call" i], button[aria-label*="End call" i], button[aria-label*="Hang up" i], button[jsname="CQlyd"]'
+      );
+      if (leaveBtn && leaveBtn.offsetWidth > 0) return true;
 
-      // Check if pre-call "Join now" button is visible
-      const joinBtn = document.querySelector('button[jsname="QkAvwb"]');
-      if (joinBtn && joinBtn.offsetWidth > 0) return false;
+      // Waiting room / green room: "Join now", "Ask to join", "Got it" button present -> NOT in call yet
+      const preCallBtn = document.querySelector('button[jsname="QkAvwb"], button[jsname="b3VHJd"]');
+      if (preCallBtn && preCallBtn.offsetWidth > 0) return false;
 
-      return true;
+      // Default: assume in-call if nothing explicitly says otherwise
+      return false;
     }
 
     _extractSpeaker(el) {
