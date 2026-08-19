@@ -64,7 +64,7 @@
     ],
   };
 
-  const DEBOUNCE_MS      = 450;
+  const DEBOUNCE_MS      = 1200;
   const FADE_AFTER_MS    = 8000;
   const POLL_INTERVAL_MS = 2000;
 
@@ -273,12 +273,13 @@
   // ═══════════════════════════════════════════════════════════════════════════
   class SpeechTextBuffer {
     constructor(flushCallback) {
-      this.flushCallback   = flushCallback;
-      this.debounceTimer   = null;
-      this.lastFlushedText = '';
-      this.currentSpeaker  = null;
-      this.currentText     = '';
-      this.terminalRegex   = /[.!?…。！？\n][\s"'»\]\)]*$/;
+      this.flushCallback       = flushCallback;
+      this.debounceTimer       = null;
+      this.lastFlushedFullText = '';
+      this.sentSentencesSet    = new Set();
+      this.currentSpeaker      = null;
+      this.currentText         = '';
+      this.terminalRegex       = /[.!?…。！？\n][\s"'»\]\)]*$/;
     }
 
     push(payload) {
@@ -287,13 +288,14 @@
 
       if (this.currentSpeaker && speaker !== this.currentSpeaker) {
         this._flushNow(this.currentSpeaker, this.currentText);
+        this.sentSentencesSet.clear();
       }
 
       this.currentSpeaker = speaker;
       this.currentText    = text.trim();
 
       clearTimeout(this.debounceTimer);
-      if (this.currentText === this.lastFlushedText) return;
+      if (this.currentText === this.lastFlushedFullText) return;
 
       if (this.terminalRegex.test(this.currentText)) {
         this._flushNow(speaker, this.currentText);
@@ -306,31 +308,95 @@
     }
 
     forceFlush() {
-      if (this.currentText && this.currentText !== this.lastFlushedText) {
+      if (this.currentText && this.currentText !== this.lastFlushedFullText) {
         this._flushNow(this.currentSpeaker || 'Speaker', this.currentText);
       }
     }
 
     reset() {
       clearTimeout(this.debounceTimer);
-      this.lastFlushedText = '';
-      this.currentSpeaker  = null;
-      this.currentText     = '';
+      this.lastFlushedFullText = '';
+      this.sentSentencesSet.clear();
+      this.currentSpeaker      = null;
+      this.currentText         = '';
     }
 
     _flushNow(speaker, fullText) {
       clearTimeout(this.debounceTimer);
-      if (!fullText || fullText === this.lastFlushedText) return;
+      if (!fullText || fullText === this.lastFlushedFullText) return;
 
-      let deltaText = fullText;
-      if (this.lastFlushedText && fullText.startsWith(this.lastFlushedText)) {
-        deltaText = fullText.slice(this.lastFlushedText.length).trim();
+      const deltaText = this._computeDelta(fullText);
+
+      if (!deltaText || deltaText.trim().length < 2) {
+        this.lastFlushedFullText = fullText;
+        return;
       }
 
-      if (!deltaText || deltaText.length < 2) return;
+      this.lastFlushedFullText = fullText;
+      this.flushCallback({ speaker, text: deltaText.trim(), fullText, timestamp: Date.now() });
+    }
 
-      this.lastFlushedText = fullText;
-      this.flushCallback({ speaker, text: deltaText, fullText, timestamp: Date.now() });
+    /**
+     * Extracts ONLY new words/sentences from fullText by comparing against
+     * previously translated text using fuzzy word overlap.
+     */
+    _computeDelta(fullText) {
+      if (!this.lastFlushedFullText) return fullText;
+
+      // 1. Direct prefix match
+      if (fullText.startsWith(this.lastFlushedFullText)) {
+        return fullText.slice(this.lastFlushedFullText.length);
+      }
+
+      // 2. Normalize punctuation and spaces for fuzzy word comparison
+      const normalize = s => s.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/).filter(Boolean);
+      const oldWords = normalize(this.lastFlushedFullText);
+      const newWords = normalize(fullText);
+
+      if (oldWords.length === 0) return fullText;
+
+      // Find where oldWords ends inside newWords (longest suffix-prefix overlap)
+      let matchIdx = -1;
+      const minOverlap = Math.min(3, oldWords.length);
+
+      for (let i = 0; i <= newWords.length - minOverlap; i++) {
+        let matches = true;
+        for (let j = 0; j < Math.min(oldWords.length - i, newWords.length - i); j++) {
+          if (oldWords[i + j] !== newWords[j]) {
+            matches = false;
+            break;
+          }
+        }
+        if (matches && (oldWords.length - i) >= minOverlap) {
+          matchIdx = i;
+          break;
+        }
+      }
+
+      // If we found the overlap point, extract only the remaining new words
+      if (matchIdx !== -1) {
+        const consumedOldCount = oldWords.length - matchIdx;
+        // Map word count back to raw text approximation
+        const rawWords = fullText.trim().split(/\s+/);
+        if (rawWords.length > consumedOldCount) {
+          return rawWords.slice(consumedOldCount).join(' ');
+        }
+      }
+
+      // 3. Fallback: Check sentence units
+      const sentences = fullText.split(/(?<=[.!?])\s+/);
+      const unsentSentences = sentences.filter(s => {
+        const norm = s.trim().toLowerCase();
+        if (this.sentSentencesSet.has(norm)) return false;
+        this.sentSentencesSet.add(norm);
+        return true;
+      });
+
+      if (unsentSentences.length > 0) {
+        return unsentSentences.join(' ');
+      }
+
+      return fullText;
     }
   }
 
