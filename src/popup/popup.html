@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MeetLingo – Real-Time Translator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+
+  <!-- ── Header ────────────────────────────────────────────────────────── -->
+  <header class="header">
+    <div class="logo">
+      <span class="logo-icon">🌐</span>
+      <div>
+        <span class="logo-name">MeetLingo</span>
+        <span class="logo-sub">Real-Time Translator</span>
+      </div>
+    </div>
+    <label class="toggle-switch" title="Enable / Disable">
+      <input type="checkbox" id="toggle-enabled" />
+      <span class="slider"></span>
+    </label>
+  </header>
+
+  <!-- ── Status Banner ─────────────────────────────────────────────────── -->
+  <div id="status-banner" class="status-banner hidden"></div>
+
+  <!-- ── Content ───────────────────────────────────────────────────────── -->
+  <main class="content">
+
+    <!-- Provider -->
+    <section class="section">
+      <label class="section-label">Translation Provider</label>
+      <div class="provider-grid">
+        <button class="provider-btn active" id="btn-deepl" data-provider="deepl">
+          <span class="provider-icon">⚡</span>
+          <span>DeepL</span>
+          <span class="badge">Best Quality</span>
+        </button>
+        <button class="provider-btn" id="btn-google" data-provider="google">
+          <span class="provider-icon">G</span>
+          <span>Google</span>
+          <span class="badge">More Languages</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- API Key -->
+    <section class="section">
+      <label class="section-label" for="api-key">API Key</label>
+      <div class="input-row">
+        <input
+          type="password"
+          id="api-key"
+          class="text-input"
+          placeholder="Paste your API key here…"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button class="icon-btn" id="btn-show-key" title="Show/hide key">👁</button>
+        <button class="icon-btn accent" id="btn-test-key" title="Test key">✓</button>
+      </div>
+      <p class="hint">
+        <a id="api-link" href="#" target="_blank" rel="noopener">Get a free DeepL API key →</a>
+      </p>
+    </section>
+
+    <!-- Languages -->
+    <section class="section two-col">
+      <div>
+        <label class="section-label" for="source-lang">From</label>
+        <select id="source-lang" class="select-input"></select>
+      </div>
+      <div class="arrow-sep">→</div>
+      <div>
+        <label class="section-label" for="target-lang">To</label>
+        <select id="target-lang" class="select-input"></select>
+      </div>
+    </section>
+
+    <!-- Display Options -->
+    <section class="section">
+      <label class="section-label">Display Options</label>
+      <div class="option-row">
+        <span class="option-label">Show original text</span>
+        <label class="toggle-switch sm">
+          <input type="checkbox" id="toggle-original" checked />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="option-row">
+        <span class="option-label">Font size <span id="font-size-val">17</span>px</span>
+        <input type="range" id="font-size" min="13" max="26" value="17" class="range-input" />
+      </div>
+      <div class="option-row">
+        <span class="option-label">Overlay opacity <span id="opacity-val">88</span>%</span>
+        <input type="range" id="opacity" min="40" max="100" value="88" class="range-input" />
+      </div>
+    </section>
+
+    <!-- Daily Char Limit -->
+    <section class="section">
+      <label class="section-label" for="char-limit">Daily Character Limit</label>
+      <div class="input-row">
+        <input
+          type="number"
+          id="char-limit"
+          class="text-input"
+          placeholder="0 = unlimited"
+          min="0"
+          max="10000000"
+          step="10000"
+        />
+        <span class="unit-label">chars</span>
+      </div>
+      <p class="hint">DeepL free tier: 500,000 chars/month</p>
+    </section>
+
+    <!-- Session Stats -->
+    <section class="section">
+      <div class="stats-header">
+        <span class="section-label">Session Stats</span>
+        <button class="text-btn" id="btn-reset-stats">Reset</button>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <span class="stat-value" id="stat-chars">—</span>
+          <span class="stat-label">Chars Translated</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value" id="stat-requests">—</span>
+          <span class="stat-label">API Requests</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value" id="stat-cache">—</span>
+          <span class="stat-label">Cache Hits</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value" id="stat-hitrate">—</span>
+          <span class="stat-label">Cache Hit Rate</span>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ── Footer ────────────────────────────────────────────────────────── -->
+  <footer class="footer">
+    <button class="save-btn" id="btn-save">Save Settings</button>
+  </footer>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
