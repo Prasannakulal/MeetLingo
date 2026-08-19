@@ -249,18 +249,18 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // SPEECH TEXT BUFFER (Sentence-Level Context & Smart Utterance Batching)
+  // SPEECH TEXT BUFFER (Global Session Deduplication & Zero-Token-Waste Engine)
   // ═══════════════════════════════════════════════════════════════════════════
   class SpeechTextBuffer {
     constructor(flushCallback) {
-      this.flushCallback       = flushCallback;
-      this.debounceTimer       = null;
-      this.lastFlushedFullText = '';
-      this.translatedSentences = new Set();
-      this.currentSpeaker      = null;
-      this.currentText         = '';
-      this.lastSpeechTime      = Date.now();
-      this.utteranceId         = Date.now();
+      this.flushCallback          = flushCallback;
+      this.debounceTimer          = null;
+      this.lastFlushedFullText    = '';
+      this.sessionTranslatedSentences = new Set(); // Global session cache (never cleared on pause!)
+      this.currentSpeaker         = null;
+      this.currentText            = '';
+      this.lastSpeechTime         = Date.now();
+      this.utteranceId            = Date.now();
     }
 
     push(payload) {
@@ -270,11 +270,13 @@
       const now = Date.now();
       const trimmedText = text.trim();
 
-      // If speaker changed or > 5 seconds of silence, start a new utterance block
-      if ((this.currentSpeaker && speaker !== this.currentSpeaker) || (now - this.lastSpeechTime > 5000)) {
+      // If speaker changed or > 4 seconds of silence, finalize previous thought & start a NEW utterance block
+      if ((this.currentSpeaker && speaker !== this.currentSpeaker) || (now - this.lastSpeechTime > 4000)) {
         this.forceFlush();
-        this.reset();
-        this.utteranceId = now;
+        this.currentSpeaker = speaker;
+        this.currentText    = '';
+        this.lastFlushedFullText = '';
+        this.utteranceId    = now;
       }
 
       this.currentSpeaker = speaker;
@@ -284,66 +286,80 @@
       clearTimeout(this.debounceTimer);
       if (this.currentText === this.lastFlushedFullText) return;
 
-      // Extract newly completed sentences or substantial clauses
-      const newSentences = this._extractNewSentences(this.currentText);
+      // Extract ONLY untranslated sentences from the growing Google Meet DOM string
+      const untranslatedSentences = this._extractUntranslatedSentences(this.currentText);
 
-      if (newSentences.length > 0) {
-        this._flushNow(speaker, newSentences.join(' '), this.currentText, false);
+      if (untranslatedSentences.length > 0) {
+        const textToTranslate = untranslatedSentences.join(' ');
+        this._flushNow(speaker, textToTranslate, textToTranslate);
       } else {
-        // Debounce uncompleted trailing thoughts
+        // Handle trailing unpunctuated clause if speaker pauses
         this.debounceTimer = setTimeout(() => {
-          this._flushNow(this.currentSpeaker, this.currentText, this.currentText, true);
+          const trailing = this._getTrailingUnpunctuatedClause(this.currentText);
+          if (trailing) {
+            this._flushNow(this.currentSpeaker, trailing, trailing);
+          }
         }, DEBOUNCE_MS);
       }
     }
 
     forceFlush() {
-      if (this.currentText && this.currentText !== this.lastFlushedFullText) {
-        this._flushNow(this.currentSpeaker || 'Speaker', this.currentText, this.currentText, true);
-      }
+      clearTimeout(this.debounceTimer);
     }
 
     reset() {
       clearTimeout(this.debounceTimer);
       this.lastFlushedFullText = '';
-      this.translatedSentences.clear();
       this.currentSpeaker      = null;
       this.currentText         = '';
       this.utteranceId         = Date.now();
+      // NOTE: sessionTranslatedSentences is deliberately NOT reset here to prevent re-translating old DOM sentences!
     }
 
-    _extractNewSentences(fullText) {
-      // Split text by sentence terminals (. ! ?)
-      const sentences = fullText.split(/(?<=[.!?])\s+/);
-      const newSentences = [];
+    _extractUntranslatedSentences(fullText) {
+      // Split text by sentence terminals (. ! ? … ! ?)
+      const sentences = fullText.split(/(?<=[.!?…。！？])\s+/);
+      const untranslated = [];
 
       for (const sentence of sentences) {
-        const norm = sentence.trim().toLowerCase();
+        const norm = sentence.trim().toLowerCase().replace(/[^\w\s]/g, '');
         if (!norm || norm.length < 2) continue;
 
         // Check if sentence is completed with terminal punctuation
         const isComplete = /[.!?…。！？]$/.test(sentence.trim());
 
-        if (isComplete && !this.translatedSentences.has(norm)) {
-          this.translatedSentences.add(norm);
-          newSentences.push(sentence.trim());
+        if (isComplete && !this.sessionTranslatedSentences.has(norm)) {
+          this.sessionTranslatedSentences.add(norm);
+          untranslated.push(sentence.trim());
         }
       }
 
-      return newSentences;
+      return untranslated;
     }
 
-    _flushNow(speaker, textToTranslate, fullParagraphText, isFinal = false) {
+    _getTrailingUnpunctuatedClause(fullText) {
+      const sentences = fullText.split(/(?<=[.!?…。！？])\s+/);
+      const lastSegment = sentences[sentences.length - 1]?.trim();
+      if (!lastSegment) return null;
+
+      const norm = lastSegment.toLowerCase().replace(/[^\w\s]/g, '');
+      if (norm.length >= 3 && !this.sessionTranslatedSentences.has(norm)) {
+        this.sessionTranslatedSentences.add(norm);
+        return lastSegment;
+      }
+      return null;
+    }
+
+    _flushNow(speaker, textToTranslate, originalText) {
       clearTimeout(this.debounceTimer);
       if (!textToTranslate || textToTranslate.trim().length < 2) return;
 
-      this.lastFlushedFullText = fullParagraphText;
+      this.lastFlushedFullText = this.currentText;
       this.flushCallback({
         speaker,
         text: textToTranslate.trim(),
-        fullText: fullParagraphText,
+        fullText: originalText.trim(),
         utteranceId: this.utteranceId,
-        isFinal,
         timestamp: Date.now(),
       });
     }
