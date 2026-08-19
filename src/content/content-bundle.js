@@ -3,7 +3,7 @@
  * Single self-contained content script injected into Google Meet.
  * No ES module imports — all code is inlined for Chrome MV3 compatibility.
  *
- * Modules inlined: CaptionObserver, SpeechTextBuffer, SubtitleOverlay, main orchestrator.
+ * Modules inlined: CaptionObserver, SpeechTextBuffer, SubtitleOverlay, TranscriptSidebar, main orchestrator.
  */
 
 (function () {
@@ -117,36 +117,25 @@
       console.debug('[MeetLingo] Observer attached to:', label);
     }
 
-    /**
-     * 4-tier container detection:
-     * Tiers 1-3 use specific selectors with position validation.
-     * Tier 4 falls back to document.body — works for ANY obfuscated-class
-     * Meet caption container (e.g. <div class="ygicle VbkSUe">).
-     */
     _findContainer() {
-      // Tier 1: Known specific Meet CC jsname attributes
       for (const sel of CAPTION_SELECTORS.CONTAINER_SPECIFIC) {
         const el = document.querySelector(sel);
         if (el && this._isInContentArea(el)) return el;
       }
 
-      // Tier 2: ARIA selectors filtered by position
       for (const sel of CAPTION_SELECTORS.CONTAINER_ARIA) {
         const el = document.querySelector(sel);
         if (el && this._isInContentArea(el)) return el;
       }
 
-      // Tier 3: Any aria-live in the content area
       const allLive = document.querySelectorAll('[aria-live="polite"], [aria-live="assertive"]');
       for (const el of allLive) {
         if (this._isInContentArea(el)) return el;
       }
 
-      // Tier 4: Broad mode — observe entire body, filter inside _extractAndDispatch
       return document.body;
     }
 
-    /** Element must be in the main content zone (not toolbar, not controls bar). */
     _isInContentArea(el) {
       try {
         const rect = el.getBoundingClientRect();
@@ -167,7 +156,6 @@
 
     _startPolling() {
       this.pollTimer = setInterval(() => {
-        // In broad mode keep observer alive; otherwise re-attach if container removed
         if (this.activeContainer === document.body) return;
         if (!this.activeContainer || !document.body.contains(this.activeContainer)) {
           this.activeContainer = null;
@@ -178,7 +166,6 @@
 
     _handleMutation(mutation) {
       if (mutation.type === 'characterData') {
-        // Direct text-node mutation — most reliable signal
         this._extractAndDispatch(mutation.target.parentElement, true);
         return;
       }
@@ -194,18 +181,10 @@
       }
     }
 
-    /**
-     * Walk from the mutated node upward to find the best "caption block":
-     *  - Leaf-like: mostly text, ≤8 child elements
-     *  - Substantial text (≥10 chars)
-     *  - In content area (broad-mode position check)
-     *  - Not a notification
-     */
     _extractAndDispatch(startNode, isCharData) {
       if (!startNode || startNode === document.body || startNode === document.documentElement) return;
 
       const isBroadMode = this.activeContainer === document.body;
-
       let el = startNode;
       let bestEl = null;
 
@@ -225,7 +204,6 @@
 
       if (!bestEl) return;
 
-      // In broad mode: enforce strict position check
       if (isBroadMode) {
         const rect = bestEl.getBoundingClientRect();
         const vh   = window.innerHeight;
@@ -236,13 +214,11 @@
       const text = (bestEl.innerText || bestEl.textContent || '').trim();
 
       if (!text || text.length < 10) return;
-      if (this._isNotification(text)) {
-        console.debug('[MeetLingo] Skipped notification:', text.slice(0, 60));
-        return;
-      }
-      if (text === this._lastRawText) return;  // Deduplicate
+      if (this._isNotification(text)) return;
 
+      if (text === this._lastRawText) return;
       this._lastRawText = text;
+
       const speakerName = this._extractSpeaker(bestEl);
       this.onChunk({ speaker: speakerName || 'Speaker', text, timestamp: Date.now() });
     }
@@ -255,13 +231,17 @@
     }
 
     _extractSpeaker(el) {
-      for (const sel of CAPTION_SELECTORS.SPEAKER) {
-        const found = el.querySelector?.(sel);
-        if (found) {
-          return found.getAttribute('data-sender-name')
-              || found.getAttribute('alt')
-              || found.textContent.trim()
-              || null;
+      const candidates = [el, el.parentElement, el.previousElementSibling];
+      for (const c of candidates) {
+        if (!c) continue;
+        for (const sel of CAPTION_SELECTORS.SPEAKER) {
+          const found = c.querySelector?.(sel);
+          if (found) {
+            return found.getAttribute('data-sender-name')
+                || found.getAttribute('alt')
+                || found.textContent.trim()
+                || null;
+          }
         }
       }
       return el.getAttribute?.('data-sender-name') || null;
@@ -269,139 +249,108 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // SPEECH TEXT BUFFER
+  // SPEECH TEXT BUFFER (Sentence-Level Context & Smart Utterance Batching)
   // ═══════════════════════════════════════════════════════════════════════════
   class SpeechTextBuffer {
     constructor(flushCallback) {
       this.flushCallback       = flushCallback;
       this.debounceTimer       = null;
       this.lastFlushedFullText = '';
-      this.sentSentencesSet    = new Set();
+      this.translatedSentences = new Set();
       this.currentSpeaker      = null;
       this.currentText         = '';
-      this.terminalRegex       = /[.!?…。！？\n][\s"'»\]\)]*$/;
+      this.lastSpeechTime      = Date.now();
+      this.utteranceId         = Date.now();
     }
 
     push(payload) {
       const { speaker, text } = payload;
       if (!text || text.trim().length < 2) return;
 
-      if (this.currentSpeaker && speaker !== this.currentSpeaker) {
-        this._flushNow(this.currentSpeaker, this.currentText);
-        this.sentSentencesSet.clear();
+      const now = Date.now();
+      const trimmedText = text.trim();
+
+      // If speaker changed or > 5 seconds of silence, start a new utterance block
+      if ((this.currentSpeaker && speaker !== this.currentSpeaker) || (now - this.lastSpeechTime > 5000)) {
+        this.forceFlush();
+        this.reset();
+        this.utteranceId = now;
       }
 
       this.currentSpeaker = speaker;
-      this.currentText    = text.trim();
+      this.currentText    = trimmedText;
+      this.lastSpeechTime = now;
 
       clearTimeout(this.debounceTimer);
       if (this.currentText === this.lastFlushedFullText) return;
 
-      if (this.terminalRegex.test(this.currentText)) {
-        this._flushNow(speaker, this.currentText);
-        return;
-      }
+      // Extract newly completed sentences or substantial clauses
+      const newSentences = this._extractNewSentences(this.currentText);
 
-      this.debounceTimer = setTimeout(() => {
-        this._flushNow(this.currentSpeaker, this.currentText);
-      }, DEBOUNCE_MS);
+      if (newSentences.length > 0) {
+        this._flushNow(speaker, newSentences.join(' '), this.currentText, false);
+      } else {
+        // Debounce uncompleted trailing thoughts
+        this.debounceTimer = setTimeout(() => {
+          this._flushNow(this.currentSpeaker, this.currentText, this.currentText, true);
+        }, DEBOUNCE_MS);
+      }
     }
 
     forceFlush() {
       if (this.currentText && this.currentText !== this.lastFlushedFullText) {
-        this._flushNow(this.currentSpeaker || 'Speaker', this.currentText);
+        this._flushNow(this.currentSpeaker || 'Speaker', this.currentText, this.currentText, true);
       }
     }
 
     reset() {
       clearTimeout(this.debounceTimer);
       this.lastFlushedFullText = '';
-      this.sentSentencesSet.clear();
+      this.translatedSentences.clear();
       this.currentSpeaker      = null;
       this.currentText         = '';
+      this.utteranceId         = Date.now();
     }
 
-    _flushNow(speaker, fullText) {
-      clearTimeout(this.debounceTimer);
-      if (!fullText || fullText === this.lastFlushedFullText) return;
-
-      const deltaText = this._computeDelta(fullText);
-
-      if (!deltaText || deltaText.trim().length < 2) {
-        this.lastFlushedFullText = fullText;
-        return;
-      }
-
-      this.lastFlushedFullText = fullText;
-      this.flushCallback({ speaker, text: deltaText.trim(), fullText, timestamp: Date.now() });
-    }
-
-    /**
-     * Extracts ONLY new words/sentences from fullText by comparing against
-     * previously translated text using fuzzy word overlap.
-     */
-    _computeDelta(fullText) {
-      if (!this.lastFlushedFullText) return fullText;
-
-      // 1. Direct prefix match
-      if (fullText.startsWith(this.lastFlushedFullText)) {
-        return fullText.slice(this.lastFlushedFullText.length);
-      }
-
-      // 2. Normalize punctuation and spaces for fuzzy word comparison
-      const normalize = s => s.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/).filter(Boolean);
-      const oldWords = normalize(this.lastFlushedFullText);
-      const newWords = normalize(fullText);
-
-      if (oldWords.length === 0) return fullText;
-
-      // Find where oldWords ends inside newWords (longest suffix-prefix overlap)
-      let matchIdx = -1;
-      const minOverlap = Math.min(3, oldWords.length);
-
-      for (let i = 0; i <= newWords.length - minOverlap; i++) {
-        let matches = true;
-        for (let j = 0; j < Math.min(oldWords.length - i, newWords.length - i); j++) {
-          if (oldWords[i + j] !== newWords[j]) {
-            matches = false;
-            break;
-          }
-        }
-        if (matches && (oldWords.length - i) >= minOverlap) {
-          matchIdx = i;
-          break;
-        }
-      }
-
-      // If we found the overlap point, extract only the remaining new words
-      if (matchIdx !== -1) {
-        const consumedOldCount = oldWords.length - matchIdx;
-        // Map word count back to raw text approximation
-        const rawWords = fullText.trim().split(/\s+/);
-        if (rawWords.length > consumedOldCount) {
-          return rawWords.slice(consumedOldCount).join(' ');
-        }
-      }
-
-      // 3. Fallback: Check sentence units
+    _extractNewSentences(fullText) {
+      // Split text by sentence terminals (. ! ?)
       const sentences = fullText.split(/(?<=[.!?])\s+/);
-      const unsentSentences = sentences.filter(s => {
-        const norm = s.trim().toLowerCase();
-        if (this.sentSentencesSet.has(norm)) return false;
-        this.sentSentencesSet.add(norm);
-        return true;
-      });
+      const newSentences = [];
 
-      if (unsentSentences.length > 0) {
-        return unsentSentences.join(' ');
+      for (const sentence of sentences) {
+        const norm = sentence.trim().toLowerCase();
+        if (!norm || norm.length < 2) continue;
+
+        // Check if sentence is completed with terminal punctuation
+        const isComplete = /[.!?…。！？]$/.test(sentence.trim());
+
+        if (isComplete && !this.translatedSentences.has(norm)) {
+          this.translatedSentences.add(norm);
+          newSentences.push(sentence.trim());
+        }
       }
 
-      return fullText;
+      return newSentences;
+    }
+
+    _flushNow(speaker, textToTranslate, fullParagraphText, isFinal = false) {
+      clearTimeout(this.debounceTimer);
+      if (!textToTranslate || textToTranslate.trim().length < 2) return;
+
+      this.lastFlushedFullText = fullParagraphText;
+      this.flushCallback({
+        speaker,
+        text: textToTranslate.trim(),
+        fullText: fullParagraphText,
+        utteranceId: this.utteranceId,
+        isFinal,
+        timestamp: Date.now(),
+      });
     }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // SUBTITLE OVERLAY (Shadow DOM)
+  // SUBTITLE OVERLAY (Shadow DOM Floating Bottom Card)
   // ═══════════════════════════════════════════════════════════════════════════
   class SubtitleOverlay {
     constructor() {
@@ -416,15 +365,17 @@
 
     show({ speaker, translatedText, originalText }) {
       if (!this.card) return;
-      const color = this._speakerColor(speaker);
 
-      this.shadow.getElementById('ml-spk').textContent  = speaker;
-      this.shadow.getElementById('ml-spk').style.color  = color;
+      this.shadow.getElementById('ml-spk').textContent   = speaker;
       this.shadow.getElementById('ml-trans').textContent = translatedText;
 
-      const origEl = this.shadow.getElementById('ml-orig');
-      origEl.textContent  = originalText;
-      origEl.style.display = this._settings.showOriginal && originalText ? 'block' : 'none';
+      const origEl    = this.shadow.getElementById('ml-orig');
+      const dividerEl = this.shadow.getElementById('ml-divider');
+      
+      const hasOrig = this._settings.showOriginal && originalText;
+      origEl.textContent      = originalText;
+      origEl.style.display    = hasOrig ? 'block' : 'none';
+      if (dividerEl) dividerEl.style.display = hasOrig ? 'block' : 'none';
 
       this.card.classList.remove('ml-hidden', 'ml-fade');
       this.card.classList.add('ml-visible');
@@ -435,8 +386,7 @@
 
     showError(msg) {
       if (!this.card) return;
-      this.shadow.getElementById('ml-spk').textContent  = '⚠ MeetLingo';
-      this.shadow.getElementById('ml-spk').style.color  = '#F87171';
+      this.shadow.getElementById('ml-spk').textContent   = '⚠ MeetLingo';
       this.shadow.getElementById('ml-trans').textContent = msg;
       this.shadow.getElementById('ml-orig').textContent  = '';
 
@@ -468,7 +418,6 @@
     }
 
     _init() {
-      // Remove any previous instance
       const old = document.getElementById('meetlingo-root');
       if (old) old.remove();
 
@@ -488,51 +437,106 @@
 
       const style = document.createElement('style');
       style.textContent = `
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-        :host { all: initial; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@600;700;800&family=Inter:wght@500;600;700&display=swap');
+        :host { all: initial; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+        
         .ml-card {
           pointer-events: auto;
-          background: rgba(10, 14, 30, 0.90);
-          backdrop-filter: blur(16px) saturate(180%);
-          -webkit-backdrop-filter: blur(16px) saturate(180%);
-          border: 1px solid rgba(255,255,255,0.10);
-          box-shadow: 0 8px 40px rgba(0,0,0,0.55), 0 0 80px rgba(56,189,248,0.06);
-          color: #F1F5F9;
-          padding: 14px 22px 16px;
+          background: #FFFFFF;
+          border: 3px solid #0F172A;
+          box-shadow: 6px 6px 0px #0F172A;
+          color: #0F172A;
+          padding: 16px 22px 18px;
           border-radius: 16px;
-          max-width: 700px;
-          min-width: 300px;
-          text-align: center;
+          max-width: 90vw;
+          min-width: 280px;
+          min-height: 100px;
+          resize: both;
+          overflow: auto;
+          text-align: left;
           cursor: grab;
           user-select: none;
-          transition: opacity 0.3s ease, transform 0.3s ease;
+          transition: opacity 0.2s ease, transform 0.2s ease;
           position: relative;
         }
+        
         .ml-card:active { cursor: grabbing; }
-        .ml-hidden  { opacity: 0; transform: translateY(6px); pointer-events: none; display: none; }
-        .ml-fade    { opacity: 0; transform: translateY(6px); }
+        .ml-hidden  { opacity: 0; transform: translateY(10px); pointer-events: none; display: none; }
+        .ml-fade    { opacity: 0; transform: translateY(10px); }
         .ml-visible { opacity: 1; transform: translateY(0); display: block; }
-        .ml-drag    { position: absolute; top: 6px; right: 10px; font-size: 12px; color: rgba(255,255,255,0.2); cursor: grab; }
-        .ml-drag:hover { color: rgba(255,255,255,0.5); }
-        .ml-spk-row { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 6px; }
-        .ml-dot     { width: 5px; height: 5px; border-radius: 50%; background: currentColor;
-                      animation: mlpulse 1.8s ease-in-out infinite; }
-        @keyframes mlpulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.6)} }
-        .ml-spk     { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; }
-        .ml-trans   { font-size: 17px; font-weight: 600; line-height: 1.45; color: #F8FAFC; }
-        .ml-orig    { font-size: 11.5px; color: #64748B; margin-top: 5px; font-style: italic; }
+        
+        .ml-drag    { position: absolute; top: 12px; right: 14px; font-size: 12px; font-weight: 800; color: #0F172A; cursor: grab; padding: 2px 7px; border-radius: 6px; background: #FFDE00; border: 2px solid #0F172A; box-shadow: 2px 2px 0px #0F172A; }
+        .ml-drag:hover { background: #FFE633; }
+        
+        .ml-header-row { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+        
+        .ml-avatar-icon {
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          background: #FFDE00;
+          border: 2px solid #0F172A;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #0F172A;
+          font-size: 11px;
+          font-weight: 800;
+          flex-shrink: 0;
+          box-shadow: 2px 2px 0px #0F172A;
+        }
+        
+        .ml-spk-info { display: flex; align-items: center; gap: 6px; }
+        .ml-dot      { width: 8px; height: 8px; border-radius: 50%; background: #00E699; border: 1.5px solid #0F172A; }
+        
+        .ml-spk {
+          font-family: 'Outfit', sans-serif;
+          font-size: 13px;
+          font-weight: 800;
+          letter-spacing: 0.04em;
+          color: #0F172A;
+          text-transform: uppercase;
+        }
+        
+        .ml-trans {
+          font-size: 17.5px;
+          font-weight: 700;
+          line-height: 1.45;
+          color: #0F172A;
+          letter-spacing: -0.01em;
+        }
+        
+        .ml-divider {
+          height: 2px;
+          background: #0F172A;
+          margin: 10px 0 8px;
+        }
+        
+        .ml-orig {
+          font-size: 12.5px;
+          font-weight: 600;
+          color: #475569;
+          line-height: 1.4;
+          font-style: normal;
+        }
       `;
       this.shadow.appendChild(style);
 
       this.card = document.createElement('div');
       this.card.className = 'ml-card ml-hidden';
       this.card.innerHTML = `
-        <span class="ml-drag" title="Drag to move">⠿</span>
-        <div class="ml-spk-row">
-          <span class="ml-dot"></span>
-          <span class="ml-spk" id="ml-spk"></span>
+        <span class="ml-drag" title="Drag overlay">⠿</span>
+        <div class="ml-header-row">
+          <div class="ml-avatar-icon">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 4-4H8a4 4 0 0 4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </div>
+          <div class="ml-spk-info">
+            <span class="ml-spk" id="ml-spk">Speaker</span>
+            <span class="ml-dot"></span>
+          </div>
         </div>
         <div class="ml-trans" id="ml-trans"></div>
+        <div class="ml-divider" id="ml-divider"></div>
         <div class="ml-orig"  id="ml-orig"></div>
       `;
       this.shadow.appendChild(this.card);
@@ -564,12 +568,569 @@
         document.addEventListener('mouseup',   onUp);
       });
     }
+  }
 
-    _speakerColor(name) {
-      if (!this.speakerMap.has(name)) {
-        this.speakerMap.set(name, SPEAKER_COLORS[this.speakerMap.size % SPEAKER_COLORS.length]);
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TRANSCRIPT SIDEBAR (Collapsible Liquid Glass History Drawer)
+  // ═══════════════════════════════════════════════════════════════════════════
+  class TranscriptSidebar {
+    constructor() {
+      this.hostEl         = null;
+      this.shadow         = null;
+      this.drawer         = null;
+      this.toggleBtn      = null;
+      this.messagesList   = null;
+      this.countBadge     = null;
+      this.history        = [];
+      this.isOpen         = false;
+      this.userIsScrolling = false;
+      this._init();
+    }
+
+    addEntry({ speaker, translatedText, originalText }) {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      
+      const entry = {
+        id:             Date.now() + Math.random().toString(36).substr(2, 4),
+        speaker:        speaker || 'Speaker',
+        translatedText: translatedText || '',
+        originalText:   originalText || '',
+        timeStr,
+      };
+
+      this.history.push(entry);
+      if (this.history.length > 500) this.history.shift(); // Cap memory
+
+      this._renderMessage(entry);
+      this._updateBadge();
+    }
+
+    destroy() {
+      if (this.hostEl) this.hostEl.remove();
+      this.hostEl = this.shadow = this.drawer = this.toggleBtn = null;
+    }
+
+    _init() {
+      const old = document.getElementById('meetlingo-sidebar-root');
+      if (old) old.remove();
+
+      this.hostEl = document.createElement('div');
+      this.hostEl.id = 'meetlingo-sidebar-root';
+      Object.assign(this.hostEl.style, {
+        position: 'fixed',
+        top: '0',
+        right: '0',
+        bottom: '0',
+        zIndex: '2147483646',
+        pointerEvents: 'none',
+      });
+      document.body.appendChild(this.hostEl);
+
+      this.shadow = this.hostEl.attachShadow({ mode: 'open' });
+
+      const style = document.createElement('style');
+      style.textContent = `
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+        :host { all: initial; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+
+        /* Neobrutalism Floating Trigger Tab */
+        .sidebar-toggle {
+          position: fixed;
+          top: 38%;
+          right: 0;
+          transform: translateY(-50%);
+          pointer-events: auto;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: #FFDE00;
+          border: 2.5px solid #0F172A;
+          border-right: none;
+          border-radius: 12px 0 0 12px;
+          padding: 10px 14px;
+          color: #0F172A;
+          font-family: 'Outfit', sans-serif;
+          font-size: 13px;
+          font-weight: 800;
+          letter-spacing: 0.02em;
+          cursor: pointer;
+          transition: all 0.15s ease-out;
+          box-shadow: -4px 4px 0px #0F172A;
+        }
+
+        .sidebar-toggle:hover {
+          background: #FFE633;
+          padding-left: 18px;
+        }
+
+        .toggle-icon { font-size: 15px; }
+        
+        .badge {
+          background: #0F172A;
+          color: #FFFFFF;
+          font-size: 10.5px;
+          font-weight: 900;
+          padding: 1px 7px;
+          border-radius: 99px;
+        }
+
+        /* Neobrutalism Drawer Panel */
+        .drawer-panel {
+          position: fixed;
+          top: 0;
+          right: 0;
+          bottom: 0;
+          width: 380px;
+          max-width: 90vw;
+          pointer-events: auto;
+          background: #FFFDF6;
+          border-left: 3px solid #0F172A;
+          box-shadow: -10px 0px 0px rgba(15, 23, 42, 0.15);
+          display: flex;
+          flex-direction: column;
+          transform: translateX(100%);
+          transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .resize-handle-left {
+          position: absolute;
+          top: 0;
+          left: -6px;
+          bottom: 0;
+          width: 12px;
+          cursor: ew-resize;
+          z-index: 10;
+          background: transparent;
+        }
+
+        .resize-handle-left:hover {
+          background: rgba(255, 222, 0, 0.5);
+          border-left: 2px solid #0F172A;
+        }
+
+        .drawer-panel.open {
+          transform: translateX(0);
+        }
+
+        /* Drawer Header */
+        .drawer-header {
+          padding: 18px 20px 14px;
+          background: #FFDE00;
+          border-bottom: 2.5px solid #0F172A;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .header-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        .drawer-title-group {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .drawer-title {
+          font-family: 'Outfit', sans-serif;
+          font-size: 17px;
+          font-weight: 800;
+          color: #0F172A;
+          letter-spacing: -0.02em;
+        }
+
+        .header-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .action-btn {
+          background: #FFFFFF;
+          border: 2px solid #0F172A;
+          border-radius: 8px;
+          color: #0F172A;
+          padding: 5px 10px;
+          font-size: 12px;
+          font-weight: 800;
+          cursor: pointer;
+          box-shadow: 2px 2px 0px #0F172A;
+          transition: all 0.15s ease;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+
+        .action-btn:hover {
+          transform: translate(-1px, -1px);
+          box-shadow: 3px 3px 0px #0F172A;
+        }
+
+        .close-btn {
+          background: #FFFFFF;
+          border: 2px solid #0F172A;
+          color: #0F172A;
+          font-size: 16px;
+          font-weight: 800;
+          cursor: pointer;
+          padding: 2px 7px;
+          border-radius: 8px;
+          box-shadow: 2px 2px 0px #0F172A;
+          transition: all 0.15s ease;
+        }
+
+        .close-btn:hover { background: #FF477E; color: #FFFFFF; }
+
+        .search-box {
+          width: 100%;
+          background: #FFFFFF;
+          border: 2px solid #0F172A;
+          border-radius: 10px;
+          padding: 9px 12px;
+          color: #0F172A;
+          font-size: 13px;
+          font-weight: 600;
+          outline: none;
+          box-shadow: 2px 2px 0px #0F172A;
+        }
+
+        .search-box::placeholder { color: #64748B; }
+
+        /* Scrollable Message List */
+        .messages-list {
+          flex: 1;
+          overflow-y: auto;
+          padding: 16px 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+        }
+
+        .messages-list::-webkit-scrollbar { width: 6px; }
+        .messages-list::-webkit-scrollbar-thumb { background: #0F172A; border-radius: 99px; }
+
+        .empty-state {
+          text-align: center;
+          color: #64748B;
+          font-size: 13px;
+          font-weight: 600;
+          margin: auto 0;
+          padding: 40px 20px;
+        }
+
+        /* Message Card */
+        .msg-card {
+          background: #FFFFFF;
+          border: 2.5px solid #0F172A;
+          border-radius: 12px;
+          padding: 12px 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          box-shadow: 3px 3px 0px #0F172A;
+          transition: all 0.15s ease;
+        }
+
+        .msg-card:hover {
+          transform: translate(-1px, -1px);
+          box-shadow: 4px 4px 0px #0F172A;
+        }
+
+        .msg-meta {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        .msg-speaker {
+          font-family: 'Outfit', sans-serif;
+          font-size: 12px;
+          font-weight: 800;
+          color: #0F172A;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          background: #FFDE00;
+          padding: 1px 6px;
+          border: 1.5px solid #0F172A;
+          border-radius: 4px;
+        }
+
+        .msg-time {
+          font-size: 11px;
+          font-weight: 700;
+          color: #64748B;
+        }
+
+        .msg-trans {
+          font-size: 14px;
+          font-weight: 700;
+          color: #0F172A;
+          line-height: 1.45;
+        }
+
+        .msg-orig {
+          font-size: 12px;
+          font-weight: 600;
+          color: #475569;
+          border-top: 2px solid #0F172A;
+          padding-top: 6px;
+          margin-top: 2px;
+        }
+
+        /* Drawer Footer */
+        .drawer-footer {
+          padding: 12px 20px;
+          background: #FFFFFF;
+          border-top: 2.5px solid #0F172A;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 11.5px;
+          font-weight: 700;
+          color: #0F172A;
+        }
+
+        .clear-btn {
+          background: #FFFFFF;
+          border: 1.5px solid #0F172A;
+          color: #0F172A;
+          font-size: 11px;
+          font-weight: 800;
+          cursor: pointer;
+          padding: 3px 8px;
+          border-radius: 6px;
+          box-shadow: 2px 2px 0px #0F172A;
+          transition: all 0.15s ease;
+        }
+
+        .clear-btn:hover { background: #FF477E; color: #FFFFFF; }
+      `;
+      this.shadow.appendChild(style);
+
+      // 1. Build Toggle Button
+      this.toggleBtn = document.createElement('button');
+      this.toggleBtn.className = 'sidebar-toggle';
+      this.toggleBtn.innerHTML = `
+        <span>Transcript</span>
+        <span class="badge" id="count-badge">0</span>
+      `;
+      this.toggleBtn.addEventListener('click', () => this.toggle());
+      this.shadow.appendChild(this.toggleBtn);
+
+      // 2. Build Sliding Drawer Panel with Left Resize Handle
+      this.drawer = document.createElement('div');
+      this.drawer.className = 'drawer-panel';
+      this.drawer.innerHTML = `
+        <div class="resize-handle-left" title="Drag to resize sidebar width"></div>
+        <div class="drawer-header">
+          <div class="header-top">
+            <div class="drawer-title-group">
+              <span class="drawer-title">Live Transcript</span>
+            </div>
+            <div class="header-actions">
+              <button class="action-btn" id="btn-copy" title="Copy full transcript">Copy</button>
+              <button class="close-btn" id="btn-close" title="Close">✕</button>
+            </div>
+          </div>
+          <input type="text" class="search-box" id="search-input" placeholder="Search transcript history..." />
+        </div>
+
+        <div class="messages-list" id="messages-list">
+          <div class="empty-state">No speech logged yet. Captions will appear here in real time.</div>
+        </div>
+
+        <div class="drawer-footer">
+          <span id="total-count-label">0 Messages logged</span>
+          <button class="clear-btn" id="btn-clear">Clear History</button>
+        </div>
+      `;
+      this.shadow.appendChild(this.drawer);
+
+      // DOM refs inside Shadow DOM
+      this.messagesList = this.shadow.getElementById('messages-list');
+      this.countBadge   = this.shadow.getElementById('count-badge');
+
+      // Attach Event Listeners
+      this.shadow.getElementById('btn-close').addEventListener('click', () => this.close());
+      this.shadow.getElementById('btn-clear').addEventListener('click', () => this.clearHistory());
+      this.shadow.getElementById('btn-copy').addEventListener('click', () => this.copyTranscript());
+      
+      const searchInput = this.shadow.getElementById('search-input');
+      searchInput.addEventListener('input', (e) => this._filterMessages(e.target.value));
+
+      // Make sidebar width resizable via left handle
+      this._makeResizable();
+
+      // Track user scroll position (so auto-scroll stops when reading old messages)
+      this.messagesList.addEventListener('scroll', () => {
+        const { scrollTop, scrollHeight, clientHeight } = this.messagesList;
+        this.userIsScrolling = (scrollHeight - scrollTop - clientHeight) > 40;
+      });
+    }
+
+    toggle() {
+      this.isOpen ? this.close() : this.open();
+    }
+
+    open() {
+      this.isOpen = true;
+      this.drawer.classList.add('open');
+      this._scrollToBottom(true);
+    }
+
+    close() {
+      this.isOpen = false;
+      this.drawer.classList.remove('open');
+    }
+
+    clearHistory() {
+      this.history = [];
+      this.messagesList.innerHTML = `<div class="empty-state">Transcript cleared.</div>`;
+      this._updateBadge();
+    }
+
+    copyTranscript() {
+      if (this.history.length === 0) return;
+      const text = this.history.map(m => `[${m.timeStr}] ${m.speaker}: ${m.translatedText} (${m.originalText})`).join('\n\n');
+      navigator.clipboard.writeText(text).then(() => {
+        const copyBtn = this.shadow.getElementById('btn-copy');
+        copyBtn.textContent = '✓ Copied!';
+        setTimeout(() => copyBtn.textContent = '📋 Copy', 2000);
+      });
+    }
+
+    updateOrAddEntry({ utteranceId, speaker, translatedText, originalText }) {
+      const existing = this.history.find(item => item.utteranceId === utteranceId);
+
+      if (existing) {
+        // Update existing entry in place
+        if (translatedText) {
+          if (existing.translatedText && !existing.translatedText.includes(translatedText)) {
+            existing.translatedText += ' ' + translatedText;
+          } else if (!existing.translatedText) {
+            existing.translatedText = translatedText;
+          }
+        }
+        if (originalText) existing.originalText = originalText;
+
+        this._updateCardElement(existing);
+      } else {
+        // Create new entry
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        
+        const entry = {
+          utteranceId:   utteranceId || Date.now(),
+          id:             Date.now() + Math.random().toString(36).substr(2, 4),
+          speaker:        speaker || 'Speaker',
+          translatedText: translatedText || '',
+          originalText:   originalText || '',
+          timeStr,
+        };
+
+        this.history.push(entry);
+        if (this.history.length > 500) this.history.shift();
+
+        this._renderMessage(entry);
+        this._updateBadge();
       }
-      return this.speakerMap.get(name);
+    }
+
+    _updateCardElement(entry) {
+      const card = this.messagesList.querySelector(`[data-utterance-id="${entry.utteranceId}"]`);
+      if (!card) return;
+
+      const transEl = card.querySelector('.msg-trans');
+      const origEl  = card.querySelector('.msg-orig');
+
+      if (transEl) transEl.textContent = entry.translatedText;
+      if (origEl)  origEl.textContent  = entry.originalText;
+      card.setAttribute('data-text', (entry.translatedText + ' ' + entry.originalText + ' ' + entry.speaker).toLowerCase());
+
+      if (!this.userIsScrolling) {
+        this._scrollToBottom();
+      }
+    }
+
+    _renderMessage(entry) {
+      const emptyState = this.messagesList.querySelector('.empty-state');
+      if (emptyState) emptyState.remove();
+
+      const card = document.createElement('div');
+      card.className = 'msg-card';
+      card.setAttribute('data-utterance-id', entry.utteranceId);
+      card.setAttribute('data-text', (entry.translatedText + ' ' + entry.originalText + ' ' + entry.speaker).toLowerCase());
+      card.innerHTML = `
+        <div class="msg-meta">
+          <span class="msg-speaker">${this._escape(entry.speaker)}</span>
+          <span class="msg-time">${entry.timeStr}</span>
+        </div>
+        <div class="msg-trans">${this._escape(entry.translatedText)}</div>
+        ${entry.originalText ? `<div class="msg-orig">${this._escape(entry.originalText)}</div>` : ''}
+      `;
+      this.messagesList.appendChild(card);
+
+      if (!this.userIsScrolling) {
+        this._scrollToBottom();
+      }
+    }
+
+    _filterMessages(query) {
+      const q = query.trim().toLowerCase();
+      const cards = this.messagesList.querySelectorAll('.msg-card');
+      cards.forEach(card => {
+        const txt = card.getAttribute('data-text') || '';
+        card.style.display = (!q || txt.includes(q)) ? 'flex' : 'none';
+      });
+    }
+
+    _updateBadge() {
+      const count = this.history.length;
+      if (this.countBadge) this.countBadge.textContent = count;
+      const lbl = this.shadow.getElementById('total-count-label');
+      if (lbl) lbl.textContent = `${count} Message${count === 1 ? '' : 's'} logged`;
+    }
+
+    _makeResizable() {
+      const handle = this.shadow.querySelector('.resize-handle-left');
+      if (!handle) return;
+
+      let startX, startWidth;
+
+      const onMouseMove = (e) => {
+        const deltaX = startX - e.clientX;
+        const newWidth = Math.max(260, Math.min(window.innerWidth * 0.8, startWidth + deltaX));
+        this.drawer.style.width = newWidth + 'px';
+      };
+
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        this.drawer.style.transition = 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)';
+      };
+
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        startX = e.clientX;
+        startWidth = this.drawer.getBoundingClientRect().width;
+        this.drawer.style.transition = 'none'; // Instant response while dragging
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+    }
+
+    _scrollToBottom(force = false) {
+      if (force || !this.userIsScrolling) {
+        this.messagesList.scrollTop = this.messagesList.scrollHeight;
+      }
+    }
+
+    _escape(str) {
+      return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
   }
 
@@ -579,6 +1140,7 @@
   let observer = null;
   let buffer   = null;
   let overlay  = null;
+  let sidebar  = null;
   let settings = null;
   let running  = false;
 
@@ -602,8 +1164,10 @@
     overlay = new SubtitleOverlay();
     overlay.applySettings(settings);
 
+    sidebar = new TranscriptSidebar();
+
     buffer = new SpeechTextBuffer(async (payload) => {
-      const { speaker, text, fullText } = payload;
+      const { speaker, text, fullText, utteranceId } = payload;
       try {
         const result = await chrome.runtime.sendMessage({
           action:     ACTIONS.TRANSLATE,
@@ -619,11 +1183,24 @@
           return;
         }
 
+        const originalText = settings.showOriginal ? (fullText || text) : '';
+
+        // 1. Show immediate floating bottom subtitle card
         overlay.show({
           speaker,
           translatedText: result.translatedText,
-          originalText:   settings.showOriginal ? (fullText || text) : '',
+          originalText,
         });
+
+        // 2. Append or update in-place in real-time Live Transcript Sidebar
+        if (sidebar) {
+          sidebar.updateOrAddEntry({
+            utteranceId,
+            speaker,
+            translatedText: result.translatedText,
+            originalText,
+          });
+        }
       } catch (err) {
         console.error('[MeetLingo] Translation error:', err);
       }
@@ -640,6 +1217,7 @@
     if (observer) { observer.stop(); observer = null; }
     if (buffer)   { buffer.forceFlush(); buffer.reset(); buffer = null; }
     if (overlay)  { overlay.hide(); }
+    if (sidebar)  { sidebar.destroy(); sidebar = null; }
     console.debug('[MeetLingo] Pipeline stopped.');
   }
 
