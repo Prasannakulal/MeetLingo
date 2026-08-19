@@ -1474,8 +1474,9 @@
       if (!res?.success) { console.warn('[MeetLingo] Could not load settings'); return; }
 
       settings = res.settings;
-      if (!settings.enabled) return;
-      startPipeline();
+      // On Teams: the call-presence DOM poller handles pipeline startup — don't start here
+      // On Meet: start immediately if enabled
+      if (Platform.isGoogleMeet() && settings.enabled) startPipeline();
     } catch (err) {
       console.error('[MeetLingo] Bootstrap error:', err);
     }
@@ -1571,52 +1572,36 @@
     if (overlay) overlay.destroy();
   });
 
-  // ── SPA Navigation Watcher (critical for Teams which doesn't do full page reloads) ──
+  // ── SPA Navigation Watcher (critical for Teams — URL may NOT change between home and meeting) ──
   if (Platform.isMSTeams()) {
-    let _lastUrl = location.href;
+    let _callDetectTimer = null;
+    let _wasInCall = false;
 
-    // Teams meeting URLs contain '/meet/' or '/l/meetup-join/' or '/_#/l/meetup'
-    const _isTeamsMeetingUrl = (url) =>
-      /\/meet\/|meetup-join|\/l\/meeting|l\/meetup|callinglaunch/i.test(url);
+    // Poll every 2s for the hangup button — this is the ONLY reliable in-call signal on Teams
+    // Teams is a React SPA; the URL often stays at teams.microsoft.com/v2/ throughout a call
+    _callDetectTimer = setInterval(() => {
+      const hangup = document.querySelector(
+        '[data-tid="hangup-button"], button[aria-label*="Leave" i][data-tid], button[aria-label*="Hang up" i]'
+      );
+      const isInCall = !!(hangup && hangup.offsetWidth > 0);
 
-    const _onUrlChange = () => {
-      const newUrl = location.href;
-      if (newUrl === _lastUrl) return;
-      const wasInMeeting = _isTeamsMeetingUrl(_lastUrl);
-      const isInMeeting  = _isTeamsMeetingUrl(newUrl);
-      _lastUrl = newUrl;
-
-      console.debug('[MeetLingo/Teams] URL changed:', newUrl, '| inMeeting:', isInMeeting);
-
-      if (isInMeeting && !wasInMeeting) {
-        // Navigated INTO a meeting — start pipeline after Teams meeting UI renders
-        console.debug('[MeetLingo/Teams] Entering meeting, starting pipeline in 3s...');
-        setTimeout(() => startPipeline(), 3000);
-      } else if (!isInMeeting && wasInMeeting) {
-        // Navigated OUT of a meeting — stop pipeline
-        console.debug('[MeetLingo/Teams] Left meeting, stopping pipeline.');
+      if (isInCall && !_wasInCall) {
+        // Just entered a call
+        _wasInCall = true;
+        console.debug('[MeetLingo/Teams] Call detected — starting pipeline in 2s...');
+        setTimeout(() => {
+          if (settings?.enabled !== false) startPipeline();
+        }, 2000);
+      } else if (!isInCall && _wasInCall) {
+        // Just left a call
+        _wasInCall = false;
+        console.debug('[MeetLingo/Teams] Call ended — stopping pipeline.');
         stopPipeline();
       }
-    };
-
-    // Watch both popstate (back/forward) and hashchange
-    window.addEventListener('popstate', _onUrlChange);
-    window.addEventListener('hashchange', _onUrlChange);
-
-    // Patch history.pushState and history.replaceState to detect SPA navigations
-    const _origPush    = history.pushState.bind(history);
-    const _origReplace = history.replaceState.bind(history);
-    history.pushState    = (...args) => { _origPush(...args);    setTimeout(_onUrlChange, 100); };
-    history.replaceState = (...args) => { _origReplace(...args); setTimeout(_onUrlChange, 100); };
-
-    // If we load directly on a meeting URL, start immediately
-    if (_isTeamsMeetingUrl(location.href)) {
-      console.debug('[MeetLingo/Teams] Loaded directly on meeting URL, starting pipeline in 4s...');
-      setTimeout(() => startPipeline(), 4000);
-    }
+    }, 2000);
   }
 
-  // Start (runs for Meet immediately; Teams uses the SPA watcher above unless on meeting URL directly)
+  // Start (Google Meet starts immediately; Teams uses the call-presence poller above)
   bootstrap();
 
 })();
