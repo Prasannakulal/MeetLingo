@@ -1270,7 +1270,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   const Platform = {
     isGoogleMeet: () => location.hostname === 'meet.google.com',
-    isMSTeams:    () => location.hostname.includes('teams.microsoft.com'),
+    isMSTeams:    () => location.hostname.includes('teams.microsoft.com') || location.hostname.includes('teams.live.com'),
   };
 
   // Emit a visible marker so we can confirm injection in DevTools

@@ -115,7 +115,8 @@ async function handleMessage(message, sender) {
       // Broadcast settings change to all Meet and Teams tabs
       const meetTabs  = await chrome.tabs.query({ url: 'https://meet.google.com/*' });
       const teamsTabs = await chrome.tabs.query({ url: 'https://teams.microsoft.com/*' });
-      for (const tab of [...meetTabs, ...teamsTabs]) {
+      const teamsLive = await chrome.tabs.query({ url: 'https://teams.live.com/*' });
+      for (const tab of [...meetTabs, ...teamsTabs, ...teamsLive]) {
         chrome.tabs.sendMessage(tab.id, {
           action:   ACTIONS.SETTINGS_UPDATED,
           settings: currentSettings,
@@ -146,7 +147,8 @@ async function handleMessage(message, sender) {
 
       const meetTabs  = await chrome.tabs.query({ url: 'https://meet.google.com/*' });
       const teamsTabs = await chrome.tabs.query({ url: 'https://teams.microsoft.com/*' });
-      for (const tab of [...meetTabs, ...teamsTabs]) {
+      const teamsLive = await chrome.tabs.query({ url: 'https://teams.live.com/*' });
+      for (const tab of [...meetTabs, ...teamsTabs, ...teamsLive]) {
         chrome.tabs.sendMessage(tab.id, {
           action:  ACTIONS.SETTINGS_UPDATED,
           settings: { enabled: message.enabled },

@@ -10,6 +10,7 @@
   "host_permissions": [
     "https://meet.google.com/*",
     "https://teams.microsoft.com/*",
+    "https://teams.live.com/*",
     "https://api-free.deepl.com/*",
     "https://api.deepl.com/*",
     "https://translation.googleapis.com/*"
@@ -26,7 +27,7 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://teams.microsoft.com/*"],
+      "matches": ["https://teams.microsoft.com/*", "https://teams.live.com/*"],
       "js": ["src/content/content-bundle.js"],
       "css": [],
       "run_at": "document_idle",
