@@ -1571,7 +1571,52 @@
     if (overlay) overlay.destroy();
   });
 
-  // Start
+  // ── SPA Navigation Watcher (critical for Teams which doesn't do full page reloads) ──
+  if (Platform.isMSTeams()) {
+    let _lastUrl = location.href;
+
+    // Teams meeting URLs contain '/meet/' or '/l/meetup-join/' or '/_#/l/meetup'
+    const _isTeamsMeetingUrl = (url) =>
+      /\/meet\/|meetup-join|\/l\/meeting|l\/meetup|callinglaunch/i.test(url);
+
+    const _onUrlChange = () => {
+      const newUrl = location.href;
+      if (newUrl === _lastUrl) return;
+      const wasInMeeting = _isTeamsMeetingUrl(_lastUrl);
+      const isInMeeting  = _isTeamsMeetingUrl(newUrl);
+      _lastUrl = newUrl;
+
+      console.debug('[MeetLingo/Teams] URL changed:', newUrl, '| inMeeting:', isInMeeting);
+
+      if (isInMeeting && !wasInMeeting) {
+        // Navigated INTO a meeting — start pipeline after Teams meeting UI renders
+        console.debug('[MeetLingo/Teams] Entering meeting, starting pipeline in 3s...');
+        setTimeout(() => startPipeline(), 3000);
+      } else if (!isInMeeting && wasInMeeting) {
+        // Navigated OUT of a meeting — stop pipeline
+        console.debug('[MeetLingo/Teams] Left meeting, stopping pipeline.');
+        stopPipeline();
+      }
+    };
+
+    // Watch both popstate (back/forward) and hashchange
+    window.addEventListener('popstate', _onUrlChange);
+    window.addEventListener('hashchange', _onUrlChange);
+
+    // Patch history.pushState and history.replaceState to detect SPA navigations
+    const _origPush    = history.pushState.bind(history);
+    const _origReplace = history.replaceState.bind(history);
+    history.pushState    = (...args) => { _origPush(...args);    setTimeout(_onUrlChange, 100); };
+    history.replaceState = (...args) => { _origReplace(...args); setTimeout(_onUrlChange, 100); };
+
+    // If we load directly on a meeting URL, start immediately
+    if (_isTeamsMeetingUrl(location.href)) {
+      console.debug('[MeetLingo/Teams] Loaded directly on meeting URL, starting pipeline in 4s...');
+      setTimeout(() => startPipeline(), 4000);
+    }
+  }
+
+  // Start (runs for Meet immediately; Teams uses the SPA watcher above unless on meeting URL directly)
   bootstrap();
 
 })();
