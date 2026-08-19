@@ -1266,6 +1266,199 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // PLATFORM DETECTION
+  // ═══════════════════════════════════════════════════════════════════════════
+  const Platform = {
+    isGoogleMeet: () => location.hostname === 'meet.google.com',
+    isMSTeams:    () => location.hostname.includes('teams.microsoft.com'),
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TEAMS NOTIFICATION PATTERNS (UI noise to ignore on teams.microsoft.com)
+  // ═══════════════════════════════════════════════════════════════════════════
+  const TEAMS_NOTIFICATION_PATTERNS = [
+    /raise hand/i,
+    /lower hand/i,
+    /react/i,
+    /more actions/i,
+    /share (content|screen)/i,
+    /stop sharing/i,
+    /open chat/i,
+    /show chat/i,
+    /people/i,
+    /participants/i,
+    /apps/i,
+    /settings/i,
+    /leave/i,
+    /end meeting/i,
+    /camera (on|off)/i,
+    /microphone (on|off)/i,
+    /mute|unmute/i,
+    /turn (on|off)/i,
+    /recording (started|stopped)/i,
+    /background/i,
+    /breakout room/i,
+    /whiteboard/i,
+    /activities/i,
+    /hand raised/i,
+    /spotlight/i,
+    /pin/i,
+    /incoming video/i,
+    /audio (on|off)/i,
+    /video (on|off)/i,
+    /waiting/i,
+    /lobby/i,
+    /device settings/i,
+    /meeting options/i,
+    /full screen/i,
+    /exit full/i,
+    /send message/i,
+  ];
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TEAMS OBSERVER (Microsoft Teams Web)
+  // ═══════════════════════════════════════════════════════════════════════════
+  class TeamsObserver {
+    constructor(onChunk) {
+      this.onChunk         = onChunk;
+      this.observer        = null;
+      this.pollTimer       = null;
+      this._seenIds        = new Set();   // Track seen caption entries by content hash
+      this._lastSpeaker    = null;
+    }
+
+    start() {
+      this._startPolling();
+      // Defer CC activation 3s to let Teams call UI fully render
+      setTimeout(() => this._tryEnableCaptions(), 3000);
+      setTimeout(() => this._tryEnableCaptions(), 6000); // second attempt
+    }
+
+    stop() {
+      if (this.observer)  { this.observer.disconnect(); this.observer = null; }
+      if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+    }
+
+    _isInCall() {
+      // Teams in-call indicator: hangup button exists and is visible
+      const hangup = document.querySelector(
+        '[data-tid="hangup-button"], button[aria-label*="Leave" i][data-tid], button[aria-label*="Hang up" i]'
+      );
+      return !!(hangup && hangup.offsetWidth > 0);
+    }
+
+    _tryEnableCaptions() {
+      if (!this._isInCall()) return;
+
+      // If captions container already exists, captions are already on
+      const container = document.querySelector('[data-tid="closed-caption-v2-virtual-list-content"]');
+      if (container) {
+        console.debug('[MeetLingo/Teams] Captions already active');
+        this._attachObserver(container);
+        return;
+      }
+
+      // Step 1: Try direct "Turn on live captions" button (sometimes on toolbar)
+      const directBtn = document.querySelector(
+        'button[aria-label*="live captions" i], button[aria-label*="Turn on captions" i], button[aria-label*="captions" i]'
+      );
+      if (directBtn && directBtn.offsetWidth > 0) {
+        console.debug('[MeetLingo/Teams] Clicking direct CC button');
+        directBtn.click();
+        return;
+      }
+
+      // Step 2: Open the "More actions" (...) overflow menu and then click "Turn on live captions"
+      const moreBtn = document.querySelector(
+        'button[data-tid="more-actions-button"], button[aria-label*="More actions" i], button[aria-label*="More options" i]'
+      );
+      if (moreBtn && moreBtn.offsetWidth > 0) {
+        console.debug('[MeetLingo/Teams] Opening More actions menu to find CC button...');
+        moreBtn.click();
+
+        // After menu opens, wait 600ms then find and click the captions menu item
+        setTimeout(() => {
+          const menuItem = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], li, button')).find(el => {
+            const t = (el.textContent || el.getAttribute('aria-label') || '').toLowerCase();
+            return t.includes('caption') || t.includes('live caption');
+          });
+          if (menuItem) {
+            console.debug('[MeetLingo/Teams] Clicking CC menu item:', menuItem.textContent.trim());
+            menuItem.click();
+          } else {
+            // Close the menu if nothing found
+            document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+          }
+        }, 600);
+      }
+    }
+
+    _attachObserver(container) {
+      if (this.observer) this.observer.disconnect();
+
+      this.observer = new MutationObserver(() => this._scanCaptions());
+      this.observer.observe(container, { childList: true, subtree: true, characterData: true });
+      console.debug('[MeetLingo/Teams] Observer attached to captions container');
+
+      // Initial scan of any existing entries
+      this._scanCaptions();
+    }
+
+    _scanCaptions() {
+      const container = document.querySelector('[data-tid="closed-caption-v2-virtual-list-content"]');
+      if (!container) return;
+
+      const entries = container.querySelectorAll('[data-tid="closed-caption-chat-message"]');
+      if (!entries.length) return;
+
+      // Only process the LAST entry — Teams appends speaker lines as permanent entries
+      // We track by a hash (speaker + text) to avoid re-sending the same content
+      const lastEntry = entries[entries.length - 1];
+
+      const speakerEl = lastEntry.querySelector('.ui-chat__message__author, [data-tid="closed-caption-author"]');
+      const textEl    = lastEntry.querySelector('[data-tid="closed-caption-text"]');
+
+      if (!textEl) return;
+
+      const speaker = (speakerEl?.textContent || '').trim() || 'Speaker';
+      const text    = (textEl.textContent || '').trim();
+
+      if (!text || text.length < 3) return;
+      if (this._isTeamsNotification(text)) return;
+
+      const hash = `${speaker}::${text}`;
+      if (this._seenIds.has(hash)) return;
+      this._seenIds.add(hash);
+
+      console.debug('[MeetLingo/Teams] Caption chunk:', speaker, '->', text);
+      this.onChunk({ speaker, text, timestamp: Date.now() });
+    }
+
+    _isTeamsNotification(text) {
+      for (const pattern of TEAMS_NOTIFICATION_PATTERNS) {
+        if (pattern.test(text)) return true;
+      }
+      return false;
+    }
+
+    _startPolling() {
+      let attempts = 0;
+      this.pollTimer = setInterval(() => {
+        // Try to enable captions for the first 30 seconds
+        if (attempts < 15) {
+          attempts++;
+          const container = document.querySelector('[data-tid="closed-caption-v2-virtual-list-content"]');
+          if (container && !this.observer) {
+            this._attachObserver(container);
+          } else if (!container) {
+            this._tryEnableCaptions();
+          }
+        }
+      }, 2000);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // MAIN ORCHESTRATOR
   // ═══════════════════════════════════════════════════════════════════════════
   let observer = null;
@@ -1337,9 +1530,11 @@
       }
     });
 
-    observer = new CaptionObserver((chunk) => buffer.push(chunk));
+    observer = Platform.isMSTeams()
+      ? new TeamsObserver((chunk) => buffer.push(chunk))
+      : new CaptionObserver((chunk) => buffer.push(chunk));
     observer.start();
-    console.debug('[MeetLingo] Pipeline started.');
+    console.debug('[MeetLingo] Pipeline started on:', Platform.isMSTeams() ? 'Microsoft Teams' : 'Google Meet');
   }
 
   function stopPipeline() {
