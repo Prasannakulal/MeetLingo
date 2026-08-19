@@ -96,8 +96,9 @@
 
     start() {
       this._locateAndAttach();
-      this._tryEnableCaptions();
       this._startPolling();
+      // Defer CC activation so Meet's toolbar has time to fully render
+      setTimeout(() => this._tryEnableCaptions(), 2000);
     }
 
     stop() {
@@ -107,7 +108,55 @@
       this._lastRawText    = '';
     }
 
+    _locateAndAttach() {
+      const container = this._findContainer();
+      if (container === this.activeContainer) return;
+
+      this.activeContainer = container;
+      this._lastRawText    = '';
+      if (this.observer) this.observer.disconnect();
+
+      this.observer = new MutationObserver((mutations) => {
+        for (const m of mutations) this._handleMutation(m);
+      });
+
+      this.observer.observe(container, {
+        childList: true, subtree: true, characterData: true,
+      });
+
+      const label = container === document.body ? 'document.body (broad mode)' : container;
+      console.debug('[MeetLingo] Observer attached to:', label);
+    }
+
+    _findContainer() {
+      for (const sel of CAPTION_SELECTORS.CONTAINER_SPECIFIC) {
+        const el = document.querySelector(sel);
+        if (el && this._isInContentArea(el)) return el;
+      }
+
+      for (const sel of CAPTION_SELECTORS.CONTAINER_ARIA) {
+        const el = document.querySelector(sel);
+        if (el && this._isInContentArea(el)) return el;
+      }
+
+      const allLive = document.querySelectorAll('[aria-live="polite"], [aria-live="assertive"]');
+      for (const el of allLive) {
+        if (this._isInContentArea(el)) return el;
+      }
+
+      return document.body;
+    }
+
+    _isInContentArea(el) {
+      try {
+        const rect = el.getBoundingClientRect();
+        const vh   = window.innerHeight;
+        return rect.width > 50 && rect.bottom > vh * 0.1 && rect.top < vh * 0.92;
+      } catch (_) { return false; }
+    }
+
     _tryEnableCaptions() {
+      // Wide net of selectors — Google Meet uses various jsname/aria-label combos across versions
       const selectors = [
         'button[jsname="r8qRAd"]',
         'button[aria-label*="turn on captions" i]',
@@ -120,33 +169,30 @@
 
       for (const sel of selectors) {
         const btn = document.querySelector(sel);
-        if (btn && btn.offsetWidth > 0) {
-          const label = (btn.getAttribute('aria-label') || '').toLowerCase();
-          const pressed = btn.getAttribute('aria-pressed');
-          
-          // If captions are already active
-          if (pressed === 'true' || label.includes('turn off captions') || label.includes('hide captions')) {
-            console.debug('[MeetLingo] Captions are already active');
-            return true;
-          }
-          
-          // Captions are OFF -> turn them ON!
-          if (pressed === 'false' || label.includes('turn on') || label.includes('captions')) {
-            console.debug('[MeetLingo] Auto-clicking CC button to activate Google Meet captions...');
-            btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-            btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-            btn.click();
-            return true;
-          }
+        if (!btn || btn.offsetWidth === 0) continue;
+
+        const label = (btn.getAttribute('aria-label') || btn.textContent || '').toLowerCase();
+        const pressed = btn.getAttribute('aria-pressed');
+
+        // Already active — nothing to do
+        if (pressed === 'true' || label.includes('turn off') || label.includes('hide captions')) {
+          console.debug('[MeetLingo] CC already active');
+          return true;
         }
+
+        // Click to enable
+        console.debug('[MeetLingo] Enabling CC via:', sel, '| label:', label);
+        btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        btn.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true }));
+        btn.click();
+        return true;
       }
 
-      // Fallback Strategy: Keyboard shortcut 'c' toggle
-      if (this._isInCall()) {
-        console.debug('[MeetLingo] Dispatching keypress "c" fallback to activate captions...');
-        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', code: 'KeyC', keyCode: 67, bubbles: true }));
-      }
-
+      // Fallback: Google Meet keyboard shortcut 'c' to toggle captions
+      console.debug('[MeetLingo] No CC button found, trying keyboard shortcut "c"...');
+      document.body.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'c', code: 'KeyC', keyCode: 67, which: 67, bubbles: true, cancelable: true
+      }));
       return false;
     }
 
