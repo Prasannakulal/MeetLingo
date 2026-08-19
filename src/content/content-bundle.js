@@ -1280,7 +1280,7 @@
   );
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // TEAMS NOTIFICATION PATTERNS (UI noise to ignore on teams.microsoft.com)
+  // TEAMS NOTIFICATION PATTERNS (UI noise & system toasts to ignore on Teams)
   // ═══════════════════════════════════════════════════════════════════════════
   const TEAMS_NOTIFICATION_PATTERNS = [
     /raise hand/i,
@@ -1319,6 +1319,14 @@
     /full screen/i,
     /exit full/i,
     /send message/i,
+
+    // Caption & transcript status announcements (system notifications)
+    /caption.{0,30}(started|stopped|turned|enabled|disabled|on|off)/i,
+    /closed caption/i,
+    /クローズドキャプション/i,
+    /字幕/i,
+    /transcription.{0,30}(started|stopped|turned|enabled|disabled|on|off)/i,
+    /privacy policy/i,
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1331,6 +1339,7 @@
       this.pollTimer       = null;
       this._seenIds        = new Set();   // Track seen caption entries by content hash
       this._lastSpeaker    = null;
+      this._currentContainer = null;
     }
 
     start() {
@@ -1343,49 +1352,46 @@
     stop() {
       if (this.observer)  { this.observer.disconnect(); this.observer = null; }
       if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+      this._currentContainer = null;
     }
 
     _isInCall() {
-      // Strategy 1: data-tid attribute (old/enterprise Teams)
+      return !!this._findLeaveButton();
+    }
+
+    _findLeaveButton() {
+      // Find the visible Leave button in the call toolbar
       const byTid = document.querySelector('[data-tid="hangup-button"], [data-tid="leave-button"]');
-      if (byTid && byTid.offsetWidth > 0) return true;
+      if (byTid && byTid.offsetWidth > 0) return byTid;
 
-      // Strategy 2: aria-label containing Leave or Hang up (New Teams)
-      const byAriaLabel = document.querySelector(
-        'button[aria-label*="Leave" i], button[aria-label*="Hang up" i], button[aria-label*="End call" i]'
-      );
-      if (byAriaLabel && byAriaLabel.offsetWidth > 0) return true;
+      const byAria = document.querySelector('button[aria-label*="Leave" i], button[aria-label*="Hang up" i], button[aria-label*="End call" i]');
+      if (byAria && byAria.offsetWidth > 0) return byAria;
 
-      // Strategy 3: Any visible button whose TEXT CONTENT is exactly "Leave" (New Teams top bar)
-      const allBtns = document.querySelectorAll('button');
-      for (const btn of allBtns) {
-        const txt = btn.textContent?.trim().toLowerCase();
-        if ((txt === 'leave' || txt === 'hang up' || txt === 'end call') && btn.offsetWidth > 0) return true;
-        // Also check span children (icon + label pattern)
+      for (const btn of document.querySelectorAll('button')) {
+        if (btn.offsetWidth === 0) continue;
         const spans = btn.querySelectorAll('span, div');
-        for (const span of spans) {
-          const s = span.textContent?.trim().toLowerCase();
-          if (s === 'leave' && btn.offsetWidth > 0) return true;
+        for (const s of spans) {
+          const txt = s.textContent?.trim().toLowerCase();
+          if (txt === 'leave' || txt === 'hang up' || txt === 'end call') return btn;
         }
       }
-
-      return false;
+      return null;
     }
 
     _tryEnableCaptions() {
       if (!this._isInCall()) return;
 
       // If captions container already exists, captions are already on
-      const container = document.querySelector('[data-tid="closed-caption-v2-virtual-list-content"]');
+      const container = this._findCaptionContainer();
       if (container) {
         console.debug('[MeetLingo/Teams] Captions already active');
         this._attachObserver(container);
         return;
       }
 
-      // Step 1: Try direct "Turn on live captions" button (sometimes on toolbar)
+      // Step 1: Try direct CC button (sometimes visible on toolbar)
       const directBtn = document.querySelector(
-        'button[aria-label*="live captions" i], button[aria-label*="Turn on captions" i], button[aria-label*="captions" i]'
+        'button[aria-label*="live captions" i], button[aria-label*="Turn on captions" i]'
       );
       if (directBtn && directBtn.offsetWidth > 0) {
         console.debug('[MeetLingo/Teams] Clicking direct CC button');
@@ -1393,42 +1399,58 @@
         return;
       }
 
-      // Step 2: Open the "More" overflow menu and find "Language and speech" → "Turn on live captions"
-      const moreBtn = document.querySelector(
-        '[data-tid="more-menu-button"], button[aria-label*="More" i], button[aria-label*="..." i]'
-      ) || Array.from(document.querySelectorAll('button')).find(b => {
-        const t = b.textContent?.trim().toLowerCase();
-        return t === 'more' || t === '...';
-      });
+      // Step 2: Find the call-TOOLBAR More button specifically.
+      const leaveBtn = this._findLeaveButton();
+      let moreBtn = null;
 
-      if (moreBtn && moreBtn.offsetWidth > 0) {
-        console.debug('[MeetLingo/Teams] Opening More menu to find captions...');
+      if (leaveBtn) {
+        let toolbar = leaveBtn.parentElement;
+        for (let i = 0; i < 6 && toolbar; i++) {
+          const candidate = Array.from(toolbar.querySelectorAll('button')).find(b => {
+            if (!b.offsetWidth) return false;
+            const label = (b.getAttribute('aria-label') || '').toLowerCase();
+            const text  = (b.textContent || '').trim().toLowerCase();
+            return label === 'more' || text === 'more';
+          });
+          if (candidate) { moreBtn = candidate; break; }
+          toolbar = toolbar.parentElement;
+        }
+      }
+
+      if (moreBtn) {
+        console.debug('[MeetLingo/Teams] Opening call-toolbar More menu...');
         moreBtn.click();
 
-        // After menu opens, wait 800ms then find and click the captions menu item
         setTimeout(() => {
-          const menuItem = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], li, button, div[class*="menu"] *')).find(el => {
+          const menuItem = Array.from(
+            document.querySelectorAll('[role="menuitem"], [role="option"], li[class*="menu"], div[class*="menu-item"]')
+          ).find(el => {
             const t = (el.textContent || el.getAttribute('aria-label') || '').toLowerCase();
-            return (t.includes('caption') || t.includes('language and speech')) && el.offsetWidth > 0;
+            return (t.includes('caption') || t.includes('language') || t.includes('speech')) && el.offsetWidth > 0;
           });
+
           if (menuItem) {
-            console.debug('[MeetLingo/Teams] Found captions menu item:', menuItem.textContent.trim());
+            console.debug('[MeetLingo/Teams] Found menu item:', menuItem.textContent.trim());
             menuItem.click();
-            // If it opened a submenu, click "Turn on live captions" after 500ms
             setTimeout(() => {
               const subItem = Array.from(document.querySelectorAll('[role="menuitem"], button, li')).find(el => {
                 const t = (el.textContent || '').toLowerCase();
                 return t.includes('turn on') && t.includes('caption') && el.offsetWidth > 0;
               });
-              if (subItem) subItem.click();
-            }, 500);
+              if (subItem) {
+                console.debug('[MeetLingo/Teams] Clicking Turn on live captions');
+                subItem.click();
+              }
+            }, 600);
           } else {
-            // Close the menu
+            // Nothing found — close the menu
+            console.debug('[MeetLingo/Teams] No captions item in More menu, closing.');
             document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
           }
         }, 800);
       }
     }
+
 
     _attachObserver(container) {
       if (this.observer) this.observer.disconnect();
@@ -1441,25 +1463,88 @@
       this._scanCaptions();
     }
 
+    _findCaptionContainer() {
+      // Strategy 1: teams.microsoft.com (work Teams) — data-tid based
+      const byTid = document.querySelector(
+        '[data-tid="closed-caption-v2-virtual-list-content"], [data-tid="closed-captions-renderer"]'
+      );
+      if (byTid) return byTid;
+
+      // Strategy 2: aria-live regions used by Teams for real-time speech
+      const ariaLive = Array.from(document.querySelectorAll('[aria-live="polite"], [aria-live="assertive"]'))
+        .find(el => {
+          const txt = el.textContent?.trim();
+          return txt && txt.length > 5 && el.offsetWidth > 0;
+        });
+      if (ariaLive) return ariaLive;
+
+      // Strategy 3: teams.live.com uses different class-based containers
+      for (const sel of [
+        'div[class*="caption"]', 'div[class*="Caption"]',
+        'div[class*="subtitle"]', 'div[class*="Subtitle"]',
+        'div[class*="transcript"]', 'div[class*="Transcript"]',
+        '[role="log"]', '[role="region"][aria-label*="caption" i]',
+      ]) {
+        const el = document.querySelector(sel);
+        if (el && el.textContent?.trim().length > 5 && el.offsetWidth > 0) return el;
+      }
+
+      return null;
+    }
+
     _scanCaptions() {
-      const container = document.querySelector('[data-tid="closed-caption-v2-virtual-list-content"]');
+      const container = this._findCaptionContainer();
       if (!container) return;
 
-      const entries = container.querySelectorAll('[data-tid="closed-caption-chat-message"]');
-      if (!entries.length) return;
+      // Attach observer if we found a new container
+      if (!this.observer || this._currentContainer !== container) {
+        this._currentContainer = container;
+        this._attachObserver(container);
+      }
 
-      // Only process the LAST entry — Teams appends speaker lines as permanent entries
-      // We track by a hash (speaker + text) to avoid re-sending the same content
-      const lastEntry = entries[entries.length - 1];
+      // Strategy 1: teams.microsoft.com data-tid entries
+      const tidEntries = container.querySelectorAll('[data-tid="closed-caption-chat-message"]');
+      if (tidEntries.length > 0) {
+        const last = tidEntries[tidEntries.length - 1];
+        const speakerEl = last.querySelector('.ui-chat__message__author, [data-tid="closed-caption-author"]');
+        const textEl    = last.querySelector('[data-tid="closed-caption-text"]');
+        if (textEl) {
+          this._emitChunk(
+            (speakerEl?.textContent || '').trim() || 'Speaker',
+            (textEl.textContent || '').trim()
+          );
+          return;
+        }
+      }
 
-      const speakerEl = lastEntry.querySelector('.ui-chat__message__author, [data-tid="closed-caption-author"]');
-      const textEl    = lastEntry.querySelector('[data-tid="closed-caption-text"]');
+      // Strategy 2: teams.live.com — scan all child elements for speaker+text pattern
+      // Caption rows typically have [speakerName, captionText] as sibling elements
+      const children = Array.from(container.children).filter(c => c.offsetWidth > 0);
+      if (children.length > 0) {
+        const last = children[children.length - 1];
+        const allSpans = last.querySelectorAll('span, p, div');
+        let speaker = 'Speaker';
+        let text    = '';
 
-      if (!textEl) return;
+        if (allSpans.length >= 2) {
+          speaker = allSpans[0].textContent?.trim() || 'Speaker';
+          text    = Array.from(allSpans).slice(1).map(s => s.textContent?.trim()).filter(Boolean).join(' ');
+        } else {
+          text = last.textContent?.trim() || '';
+        }
 
-      const speaker = (speakerEl?.textContent || '').trim() || 'Speaker';
-      const text    = (textEl.textContent || '').trim();
+        this._emitChunk(speaker, text);
+        return;
+      }
 
+      // Strategy 3: just grab the full text content of the container
+      const rawText = container.textContent?.trim();
+      if (rawText && rawText.length > 3) {
+        this._emitChunk('Speaker', rawText);
+      }
+    }
+
+    _emitChunk(speaker, text) {
       if (!text || text.length < 3) return;
       if (this._isTeamsNotification(text)) return;
 
@@ -1481,14 +1566,14 @@
     _startPolling() {
       let attempts = 0;
       this.pollTimer = setInterval(() => {
-        // Try to enable captions for the first 30 seconds
-        if (attempts < 15) {
+        if (attempts < 20) {
           attempts++;
-          const container = document.querySelector('[data-tid="closed-caption-v2-virtual-list-content"]');
-          if (container && !this.observer) {
-            this._attachObserver(container);
-          } else if (!container) {
-            this._tryEnableCaptions();
+          const container = this._findCaptionContainer();
+          if (container) {
+            if (!this.observer) this._attachObserver(container);
+          } else {
+            // Container not found yet — try to enable captions
+            if (attempts <= 10) this._tryEnableCaptions();
           }
         }
       }, 2000);
