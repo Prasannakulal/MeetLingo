@@ -1464,29 +1464,42 @@
     }
 
     _findCaptionContainer() {
-      // Strategy 1: teams.microsoft.com (work Teams) — data-tid based
+      // 1. Specific Teams caption data-tid attributes
       const byTid = document.querySelector(
-        '[data-tid="closed-caption-v2-virtual-list-content"], [data-tid="closed-captions-renderer"]'
+        '[data-tid="closed-caption-v2-virtual-list-content"], [data-tid="closed-captions-renderer"], [data-tid="closed-captions-container"]'
       );
-      if (byTid) return byTid;
+      if (byTid && byTid.offsetWidth > 0) return byTid;
 
-      // Strategy 2: aria-live regions used by Teams for real-time speech
-      const ariaLive = Array.from(document.querySelectorAll('[aria-live="polite"], [aria-live="assertive"]'))
-        .find(el => {
-          const txt = el.textContent?.trim();
-          return txt && txt.length > 5 && el.offsetWidth > 0;
-        });
-      if (ariaLive) return ariaLive;
-
-      // Strategy 3: teams.live.com uses different class-based containers
+      // 2. Specific class/aria selectors for caption overlays
       for (const sel of [
-        'div[class*="caption"]', 'div[class*="Caption"]',
-        'div[class*="subtitle"]', 'div[class*="Subtitle"]',
-        'div[class*="transcript"]', 'div[class*="Transcript"]',
-        '[role="log"]', '[role="region"][aria-label*="caption" i]',
+        'div[class*="caption" i]', 'div[class*="Caption" i]',
+        'div[class*="subtitle" i]', 'div[class*="Subtitle" i]',
+        '[role="region"][aria-label*="caption" i]',
+        '[role="log"][aria-label*="caption" i]',
       ]) {
-        const el = document.querySelector(sel);
-        if (el && el.textContent?.trim().length > 5 && el.offsetWidth > 0) return el;
+        const els = document.querySelectorAll(sel);
+        for (const el of els) {
+          if (!el || el.offsetWidth < 100 || el.offsetHeight < 20) continue;
+          const txt = el.textContent?.trim() || '';
+          if (txt.length > 2 && !this._isTeamsNotification(txt)) return el;
+        }
+      }
+
+      // 3. Fallback: Search bottom 35% of the viewport for a visible container displaying captions
+      const vh = window.innerHeight;
+      const allDivs = document.querySelectorAll('div');
+      for (const el of allDivs) {
+        if (el.children.length > 15) continue; // Skip broad layout wrappers
+        const rect = el.getBoundingClientRect();
+        // Check if positioned near bottom of viewport
+        if (rect.width > 200 && rect.height > 30 && rect.top > vh * 0.60 && rect.bottom <= vh + 10) {
+          const txt = el.textContent?.trim() || '';
+          if (txt.length >= 3 && !this._isTeamsNotification(txt)) {
+            // Check if it's not the main call grid or chat panel
+            const isControl = el.querySelector('button[aria-label*="Leave" i], button[aria-label*="Mic" i]');
+            if (!isControl) return el;
+          }
+        }
       }
 
       return null;
@@ -1496,13 +1509,12 @@
       const container = this._findCaptionContainer();
       if (!container) return;
 
-      // Attach observer if we found a new container
       if (!this.observer || this._currentContainer !== container) {
         this._currentContainer = container;
         this._attachObserver(container);
       }
 
-      // Strategy 1: teams.microsoft.com data-tid entries
+      // 1. Check for data-tid message entries (Work Teams)
       const tidEntries = container.querySelectorAll('[data-tid="closed-caption-chat-message"]');
       if (tidEntries.length > 0) {
         const last = tidEntries[tidEntries.length - 1];
@@ -1517,31 +1529,28 @@
         }
       }
 
-      // Strategy 2: teams.live.com — scan all child elements for speaker+text pattern
-      // Caption rows typically have [speakerName, captionText] as sibling elements
-      const children = Array.from(container.children).filter(c => c.offsetWidth > 0);
-      if (children.length > 0) {
-        const last = children[children.length - 1];
-        const allSpans = last.querySelectorAll('span, p, div');
-        let speaker = 'Speaker';
-        let text    = '';
+      // 2. Generic caption box scan (Teams Live / Personal Teams)
+      // Extract all text nodes, excluding button labels/icons (like settings gear, thumbs up/down, close X)
+      const clone = container.cloneNode(true);
+      const actionButtons = clone.querySelectorAll('button, [role="button"], svg, i');
+      actionButtons.forEach(b => b.remove());
 
-        if (allSpans.length >= 2) {
-          speaker = allSpans[0].textContent?.trim() || 'Speaker';
-          text    = Array.from(allSpans).slice(1).map(s => s.textContent?.trim()).filter(Boolean).join(' ');
-        } else {
-          text = last.textContent?.trim() || '';
-        }
+      const textContent = clone.textContent?.trim() || '';
+      if (!textContent || textContent.length < 2) return;
 
-        this._emitChunk(speaker, text);
-        return;
+      // Extract lines from the cleaned text
+      const lines = textContent.split('\n').map(l => l.trim()).filter(Boolean);
+      let speaker = 'Speaker';
+      let text = textContent;
+
+      if (lines.length >= 2) {
+        speaker = lines[0];
+        text = lines.slice(1).join(' ');
+      } else if (lines.length === 1) {
+        text = lines[0];
       }
 
-      // Strategy 3: just grab the full text content of the container
-      const rawText = container.textContent?.trim();
-      if (rawText && rawText.length > 3) {
-        this._emitChunk('Speaker', rawText);
-      }
+      this._emitChunk(speaker, text);
     }
 
     _emitChunk(speaker, text) {
