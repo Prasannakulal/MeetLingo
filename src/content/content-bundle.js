@@ -22,7 +22,7 @@
     TOGGLE_OVERLAY:   'TOGGLE_OVERLAY',
   };
 
-  // Meet notification patterns to IGNORE (these are UI toasts, not speech)
+  // Meet notification patterns to IGNORE (these are UI toasts, tooltips & green room text, not speech)
   const NOTIFICATION_PATTERNS = [
     /panel is (open|closed)/i,
     /is now (on|off|muted|unmuted)/i,
@@ -35,6 +35,15 @@
     /recording (started|stopped)/i,
     /\bpresenting\b/i,
     /^[^\s]{0,30}\s(joined|left)$/i,
+
+    // Pre-call green room & toolbar UI tooltips
+    /turn (on|off) (microphone|mic|camera|video)/i,
+    /\(⌘\s*\+\s*[a-z]\)/i,
+    /frame_person|visual_effects|more_vert|backgrounds and effects/i,
+    /more options for/i,
+    /ready to join/i,
+    /language\s+(english|hindi|spanish|french|german)/i,
+    /ask to join|join now/i,
   ];
 
   const CAPTION_SELECTORS = {
@@ -182,6 +191,7 @@
     }
 
     _extractAndDispatch(startNode, isCharData) {
+      if (!this._isInCall()) return;
       if (!startNode || startNode === document.body || startNode === document.documentElement) return;
 
       const isBroadMode = this.activeContainer === document.body;
@@ -228,6 +238,16 @@
         if (pattern.test(text)) return true;
       }
       return false;
+    }
+
+    _isInCall() {
+      // If "Ready to join?" green room join button is visible on screen, we are NOT in an active call!
+      const joinBtn = document.querySelector('button[jsname="QkAvwb"], button[aria-label*="Join" i], [data-promotion-id]');
+      if (joinBtn && joinBtn.offsetWidth > 0 && joinBtn.offsetHeight > 0) {
+        const txt = (joinBtn.innerText || joinBtn.textContent || '').toLowerCase();
+        if (txt.includes('join') || txt.includes('ready')) return false;
+      }
+      return true;
     }
 
     _extractSpeaker(el) {
