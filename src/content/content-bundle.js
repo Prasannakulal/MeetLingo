@@ -1023,15 +1023,9 @@
       const existing = this.history.find(item => item.utteranceId === utteranceId);
 
       if (existing) {
-        // Update existing entry in place
-        if (translatedText) {
-          if (existing.translatedText && !existing.translatedText.includes(translatedText)) {
-            existing.translatedText += ' ' + translatedText;
-          } else if (!existing.translatedText) {
-            existing.translatedText = translatedText;
-          }
-        }
-        if (originalText) existing.originalText = originalText;
+        // Update existing entry in place with latest clean translation & original text
+        if (translatedText) existing.translatedText = translatedText;
+        if (originalText)   existing.originalText   = originalText;
 
         this._updateCardElement(existing);
       } else {
