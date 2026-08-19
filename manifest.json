@@ -29,7 +29,8 @@
       "matches": ["https://teams.microsoft.com/*"],
       "js": ["src/content/content-bundle.js"],
       "css": [],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "action": {

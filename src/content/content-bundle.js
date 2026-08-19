@@ -1273,6 +1273,12 @@
     isMSTeams:    () => location.hostname.includes('teams.microsoft.com'),
   };
 
+  // Emit a visible marker so we can confirm injection in DevTools
+  console.log(
+    `%c[MeetLingo] Content script injected on: ${location.hostname} (${location.pathname})`,
+    'background:#FFDE00;color:#000;font-weight:bold;padding:2px 6px;border-radius:3px'
+  );
+
   // ═══════════════════════════════════════════════════════════════════════════
   // TEAMS NOTIFICATION PATTERNS (UI noise to ignore on teams.microsoft.com)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1340,11 +1346,30 @@
     }
 
     _isInCall() {
-      // Teams in-call indicator: hangup button exists and is visible
-      const hangup = document.querySelector(
-        '[data-tid="hangup-button"], button[aria-label*="Leave" i][data-tid], button[aria-label*="Hang up" i]'
+      // Strategy 1: data-tid attribute (old/enterprise Teams)
+      const byTid = document.querySelector('[data-tid="hangup-button"], [data-tid="leave-button"]');
+      if (byTid && byTid.offsetWidth > 0) return true;
+
+      // Strategy 2: aria-label containing Leave or Hang up (New Teams)
+      const byAriaLabel = document.querySelector(
+        'button[aria-label*="Leave" i], button[aria-label*="Hang up" i], button[aria-label*="End call" i]'
       );
-      return !!(hangup && hangup.offsetWidth > 0);
+      if (byAriaLabel && byAriaLabel.offsetWidth > 0) return true;
+
+      // Strategy 3: Any visible button whose TEXT CONTENT is exactly "Leave" (New Teams top bar)
+      const allBtns = document.querySelectorAll('button');
+      for (const btn of allBtns) {
+        const txt = btn.textContent?.trim().toLowerCase();
+        if ((txt === 'leave' || txt === 'hang up' || txt === 'end call') && btn.offsetWidth > 0) return true;
+        // Also check span children (icon + label pattern)
+        const spans = btn.querySelectorAll('span, div');
+        for (const span of spans) {
+          const s = span.textContent?.trim().toLowerCase();
+          if (s === 'leave' && btn.offsetWidth > 0) return true;
+        }
+      }
+
+      return false;
     }
 
     _tryEnableCaptions() {
@@ -1368,28 +1393,40 @@
         return;
       }
 
-      // Step 2: Open the "More actions" (...) overflow menu and then click "Turn on live captions"
+      // Step 2: Open the "More" overflow menu and find "Language and speech" → "Turn on live captions"
       const moreBtn = document.querySelector(
-        'button[data-tid="more-actions-button"], button[aria-label*="More actions" i], button[aria-label*="More options" i]'
-      );
+        '[data-tid="more-menu-button"], button[aria-label*="More" i], button[aria-label*="..." i]'
+      ) || Array.from(document.querySelectorAll('button')).find(b => {
+        const t = b.textContent?.trim().toLowerCase();
+        return t === 'more' || t === '...';
+      });
+
       if (moreBtn && moreBtn.offsetWidth > 0) {
-        console.debug('[MeetLingo/Teams] Opening More actions menu to find CC button...');
+        console.debug('[MeetLingo/Teams] Opening More menu to find captions...');
         moreBtn.click();
 
-        // After menu opens, wait 600ms then find and click the captions menu item
+        // After menu opens, wait 800ms then find and click the captions menu item
         setTimeout(() => {
-          const menuItem = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], li, button')).find(el => {
+          const menuItem = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], li, button, div[class*="menu"] *')).find(el => {
             const t = (el.textContent || el.getAttribute('aria-label') || '').toLowerCase();
-            return t.includes('caption') || t.includes('live caption');
+            return (t.includes('caption') || t.includes('language and speech')) && el.offsetWidth > 0;
           });
           if (menuItem) {
-            console.debug('[MeetLingo/Teams] Clicking CC menu item:', menuItem.textContent.trim());
+            console.debug('[MeetLingo/Teams] Found captions menu item:', menuItem.textContent.trim());
             menuItem.click();
+            // If it opened a submenu, click "Turn on live captions" after 500ms
+            setTimeout(() => {
+              const subItem = Array.from(document.querySelectorAll('[role="menuitem"], button, li')).find(el => {
+                const t = (el.textContent || '').toLowerCase();
+                return t.includes('turn on') && t.includes('caption') && el.offsetWidth > 0;
+              });
+              if (subItem) subItem.click();
+            }, 500);
           } else {
-            // Close the menu if nothing found
+            // Close the menu
             document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
           }
-        }, 600);
+        }, 800);
       }
     }
 
