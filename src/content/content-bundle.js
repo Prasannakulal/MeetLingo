@@ -108,37 +108,53 @@
     }
 
     _tryEnableCaptions() {
-      if (!this._isInCall()) return;
-
       const selectors = [
         'button[jsname="r8qRAd"]',
         'button[aria-label*="turn on captions" i]',
+        'button[aria-label*="turn on closed captions" i]',
         'button[aria-label*="caption" i]',
         'button[aria-label*="subtitle" i]',
         'button[data-tooltip*="caption" i]',
+        'button[aria-label*="captions" i]',
       ];
 
       for (const sel of selectors) {
         const btn = document.querySelector(sel);
-        if (btn) {
-          const isPressed = btn.getAttribute('aria-pressed') === 'true' || btn.classList.contains('VfPpkd-Lg4e8c-OWXEXe-bN9bZe');
+        if (btn && btn.offsetWidth > 0) {
           const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+          const pressed = btn.getAttribute('aria-pressed');
           
-          if (!isPressed || label.includes('turn on')) {
+          // If captions are already active
+          if (pressed === 'true' || label.includes('turn off captions') || label.includes('hide captions')) {
+            console.debug('[MeetLingo] Captions are already active');
+            return true;
+          }
+          
+          // Captions are OFF -> turn them ON!
+          if (pressed === 'false' || label.includes('turn on') || label.includes('captions')) {
+            console.debug('[MeetLingo] Auto-clicking CC button to activate Google Meet captions...');
+            btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+            btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
             btn.click();
-            console.debug('[MeetLingo] Auto-enabled Google Meet Captions (CC)');
             return true;
           }
         }
       }
+
+      // Fallback Strategy: Keyboard shortcut 'c' toggle
+      if (this._isInCall()) {
+        console.debug('[MeetLingo] Dispatching keypress "c" fallback to activate captions...');
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', code: 'KeyC', keyCode: 67, bubbles: true }));
+      }
+
       return false;
     }
 
     _startPolling() {
       let attempts = 0;
       this.pollTimer = setInterval(() => {
-        // Retry auto-enabling captions for the first 10 seconds after joining call
-        if (attempts < 5) {
+        // Retry auto-enabling captions for the first 15 seconds of entering meeting
+        if (attempts < 10) {
           attempts++;
           this._tryEnableCaptions();
         }
@@ -219,12 +235,14 @@
     }
 
     _isInCall() {
-      // If "Ready to join?" green room join button is visible on screen, we are NOT in an active call!
-      const joinBtn = document.querySelector('button[jsname="QkAvwb"], button[aria-label*="Join" i], [data-promotion-id]');
-      if (joinBtn && joinBtn.offsetWidth > 0 && joinBtn.offsetHeight > 0) {
-        const txt = (joinBtn.innerText || joinBtn.textContent || '').toLowerCase();
-        if (txt.includes('join') || txt.includes('ready')) return false;
-      }
+      // Check for active in-call controls (leave call button, mic/camera controls)
+      const inCallElem = document.querySelector('button[aria-label*="Leave call" i], button[aria-label*="Hang up" i], button[jsname="CQlyd"], button[aria-label*="microphone" i], button[aria-label*="camera" i]');
+      if (inCallElem && inCallElem.offsetWidth > 0) return true;
+
+      // Check if pre-call "Join now" button is visible
+      const joinBtn = document.querySelector('button[jsname="QkAvwb"]');
+      if (joinBtn && joinBtn.offsetWidth > 0) return false;
+
       return true;
     }
 
