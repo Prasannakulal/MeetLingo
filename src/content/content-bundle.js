@@ -96,6 +96,7 @@
 
     start() {
       this._locateAndAttach();
+      this._tryEnableCaptions();
       this._startPolling();
     }
 
@@ -106,65 +107,42 @@
       this._lastRawText    = '';
     }
 
-    _locateAndAttach() {
-      const container = this._findContainer();
-      if (container === this.activeContainer) return;
-
-      this.activeContainer = container;
-      this._lastRawText    = '';
-      if (this.observer) this.observer.disconnect();
-
-      this.observer = new MutationObserver((mutations) => {
-        for (const m of mutations) this._handleMutation(m);
-      });
-
-      this.observer.observe(container, {
-        childList: true, subtree: true, characterData: true,
-      });
-
-      const label = container === document.body ? 'document.body (broad mode)' : container;
-      console.debug('[MeetLingo] Observer attached to:', label);
-    }
-
-    _findContainer() {
-      for (const sel of CAPTION_SELECTORS.CONTAINER_SPECIFIC) {
-        const el = document.querySelector(sel);
-        if (el && this._isInContentArea(el)) return el;
-      }
-
-      for (const sel of CAPTION_SELECTORS.CONTAINER_ARIA) {
-        const el = document.querySelector(sel);
-        if (el && this._isInContentArea(el)) return el;
-      }
-
-      const allLive = document.querySelectorAll('[aria-live="polite"], [aria-live="assertive"]');
-      for (const el of allLive) {
-        if (this._isInContentArea(el)) return el;
-      }
-
-      return document.body;
-    }
-
-    _isInContentArea(el) {
-      try {
-        const rect = el.getBoundingClientRect();
-        const vh   = window.innerHeight;
-        return rect.width > 50 && rect.bottom > vh * 0.1 && rect.top < vh * 0.92;
-      } catch (_) { return false; }
-    }
-
     _tryEnableCaptions() {
-      for (const sel of CAPTION_SELECTORS.CAPTION_BUTTON) {
+      if (!this._isInCall()) return;
+
+      const selectors = [
+        'button[jsname="r8qRAd"]',
+        'button[aria-label*="turn on captions" i]',
+        'button[aria-label*="caption" i]',
+        'button[aria-label*="subtitle" i]',
+        'button[data-tooltip*="caption" i]',
+      ];
+
+      for (const sel of selectors) {
         const btn = document.querySelector(sel);
         if (btn) {
-          if (btn.getAttribute('aria-pressed') !== 'true') btn.click();
-          return;
+          const isPressed = btn.getAttribute('aria-pressed') === 'true' || btn.classList.contains('VfPpkd-Lg4e8c-OWXEXe-bN9bZe');
+          const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+          
+          if (!isPressed || label.includes('turn on')) {
+            btn.click();
+            console.debug('[MeetLingo] Auto-enabled Google Meet Captions (CC)');
+            return true;
+          }
         }
       }
+      return false;
     }
 
     _startPolling() {
+      let attempts = 0;
       this.pollTimer = setInterval(() => {
+        // Retry auto-enabling captions for the first 10 seconds after joining call
+        if (attempts < 5) {
+          attempts++;
+          this._tryEnableCaptions();
+        }
+
         if (this.activeContainer === document.body) return;
         if (!this.activeContainer || !document.body.contains(this.activeContainer)) {
           this.activeContainer = null;
