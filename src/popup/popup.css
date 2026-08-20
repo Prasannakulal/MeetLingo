@@ -1,4 +1,4 @@
-/* popup.css – MeetLingo Professional Neobrutalism Design System */
+/* popup.css – MeetLingo Neobrutalism Design System */
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -7,7 +7,6 @@
 }
 
 :root {
-  /* Neobrutalism Palette */
   --neo-bg:          #F4F0EA;
   --neo-card-bg:     #FFFFFF;
   --neo-stroke:      #0F172A;
@@ -25,24 +24,23 @@
   --danger:          #FF4747;
   --success:         #00C853;
   
-  --font-heading:    'Outfit', -apple-system, sans-serif;
-  --font-body:       'Inter', -apple-system, sans-serif;
+  --font-family:     system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   
-  --radius-card:   14px;
-  --radius-btn:    10px;
-  --radius-pill:   99px;
+  --radius-card:     14px;
+  --radius-btn:      10px;
+  --radius-pill:     99px;
   
-  --shadow-card:   4px 4px 0px var(--neo-stroke);
-  --shadow-btn:    3px 3px 0px var(--neo-stroke);
-  --shadow-sm:     2px 2px 0px var(--neo-stroke);
+  --shadow-card:     4px 4px 0px var(--neo-stroke);
+  --shadow-btn:      3px 3px 0px var(--neo-stroke);
+  --shadow-sm:       2px 2px 0px var(--neo-stroke);
   
-  --transition:    all 0.15s ease-out;
+  --transition:      all 0.15s ease-out;
 }
 
 html, body {
   width: 380px;
-  min-height: 580px;
-  font-family: var(--font-body);
+  min-height: 560px;
+  font-family: var(--font-family);
   font-size: 13px;
   color: var(--text-primary);
   background: var(--neo-bg);
@@ -62,19 +60,12 @@ html, body {
   border-radius: var(--radius-pill);
 }
 
-.app-viewport {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-  position: relative;
-}
-
 /* ── Header ──────────────────────────────────────────────────────────── */
-.app-header {
+.header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: 14px 18px;
   background: var(--neo-yellow);
   border-bottom: 2.5px solid var(--neo-stroke);
   position: sticky;
@@ -82,54 +73,54 @@ html, body {
   z-index: 20;
 }
 
-.user-brand {
+.logo {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.brand-title-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.logo-icon {
+  font-size: 22px;
+  line-height: 1;
 }
 
-.brand-name {
-  font-family: var(--font-heading);
-  font-size: 18px;
+.logo-name {
+  display: block;
+  font-size: 17px;
   font-weight: 800;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
   color: var(--neo-stroke);
 }
 
-.brand-sub {
-  font-size: 11px;
+.logo-sub {
+  display: block;
+  font-size: 10.5px;
   font-weight: 700;
   color: var(--neo-stroke);
   opacity: 0.85;
 }
 
-/* ── Neobrutalism Switch ────────────────────────────────────────────── */
-.matte-switch {
+/* ── Neobrutalism Toggle Switch ──────────────────────────────────────── */
+.toggle-switch {
   position: relative;
   display: inline-block;
-  width: 46px;
-  height: 26px;
+  width: 44px;
+  height: 24px;
   cursor: pointer;
 }
 
-.matte-switch.sm {
-  width: 38px;
-  height: 22px;
+.toggle-switch.sm {
+  width: 36px;
+  height: 20px;
 }
 
-.matte-switch input {
+.toggle-switch input {
   opacity: 0;
   width: 0;
   height: 0;
 }
 
-.matte-slider {
+.slider {
   position: absolute;
   inset: 0;
   background: #FFFFFF;
@@ -139,11 +130,11 @@ html, body {
   transition: var(--transition);
 }
 
-.matte-slider::before {
+.slider::before {
   content: '';
   position: absolute;
-  width: 15px;
-  height: 15px;
+  width: 13px;
+  height: 13px;
   left: 3px;
   top: 50%;
   transform: translateY(-50%);
@@ -152,34 +143,33 @@ html, body {
   transition: var(--transition);
 }
 
-.sm .matte-slider::before {
-  width: 12px;
-  height: 12px;
+.sm .slider::before {
+  width: 10px;
+  height: 10px;
   left: 2px;
 }
 
-input:checked + .matte-slider {
+input:checked + .slider {
   background: var(--neo-cyan);
 }
 
-input:checked + .matte-slider::before {
-  background: var(--neo-stroke);
-  transform: translate(20px, -50%);
+input:checked + .slider::before {
+  transform: translate(19px, -50%);
 }
 
-.sm input:checked + .matte-slider::before {
-  transform: translate(16px, -50%);
+.sm input:checked + .slider::before {
+  transform: translate(15px, -50%);
 }
 
 /* ── Status Banner ───────────────────────────────────────────────────── */
 .status-banner {
-  margin: 14px 18px 0;
-  padding: 10px 14px;
+  margin: 12px 16px 0;
+  padding: 8px 12px;
   border-radius: var(--radius-btn);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 700;
   text-align: center;
-  border: 2.5px solid var(--neo-stroke);
+  border: 2px solid var(--neo-stroke);
   box-shadow: var(--shadow-sm);
   transition: var(--transition);
 }
@@ -189,351 +179,118 @@ input:checked + .matte-slider::before {
 .status-banner.info    { background: var(--neo-cyan); color: var(--neo-stroke); }
 .status-banner.hidden  { display: none; }
 
-/* ── Main Viewport Content ───────────────────────────────────────────── */
-.main-content {
-  padding: 16px 18px 90px;
+/* ── Content ─────────────────────────────────────────────────────────── */
+.content {
+  padding: 14px 16px 80px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
-/* ── Neobrutalism Cards ──────────────────────────────────────────────── */
-.glass-card {
+/* ── Section Card ────────────────────────────────────────────────────── */
+.section {
   background: var(--neo-card-bg);
   border: 2.5px solid var(--neo-stroke);
   border-radius: var(--radius-card);
-  padding: 16px;
+  padding: 14px 16px;
   box-shadow: var(--shadow-card);
-  transition: var(--transition);
 }
 
-.card-header-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.card-heading {
-  font-family: var(--font-heading);
-  font-size: 12px;
+.section-label {
+  display: block;
+  font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--neo-stroke);
+  margin-bottom: 8px;
 }
 
-/* ── Hero Dashboard: Gauge Arc Meter ────────────────────────────────── */
-.hero-gauge-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 16px 16px 14px;
-  background: #FFFFFF;
-  border: 2.5px solid var(--neo-stroke);
-  box-shadow: 5px 5px 0px var(--neo-stroke);
-}
-
-.card-subtitle-row {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
-}
-
-.card-eyebrow {
-  font-family: var(--font-heading);
-  font-size: 12px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--neo-stroke);
-  background: var(--neo-yellow);
-  padding: 2px 8px;
-  border: 2px solid var(--neo-stroke);
-  border-radius: 6px;
-  box-shadow: 2px 2px 0px var(--neo-stroke);
-}
-
-.ghost-reset-btn {
-  background: #FFFFFF;
-  border: 2px solid var(--neo-stroke);
-  color: var(--neo-stroke);
-  font-family: var(--font-heading);
-  font-size: 10.5px;
-  font-weight: 800;
-  cursor: pointer;
-  padding: 3px 8px;
-  border-radius: 6px;
-  box-shadow: 2px 2px 0px var(--neo-stroke);
-  transition: var(--transition);
-}
-
-.ghost-reset-btn:hover {
-  background: var(--neo-pink);
-  color: #FFFFFF;
-  transform: translate(-1px, -1px);
-  box-shadow: 3px 3px 0px var(--neo-stroke);
-}
-
-.ghost-reset-btn:active {
-  transform: translate(1px, 1px);
-  box-shadow: 1px 1px 0px var(--neo-stroke);
-}
-
-.gauge-display-container {
-  position: relative;
-  width: 190px;
-  height: 105px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-top: 6px;
-}
-
-.gauge-svg {
-  width: 100%;
-  height: 100%;
-}
-
-.gauge-center-text {
-  position: absolute;
-  bottom: 8px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.gauge-value {
-  font-family: var(--font-heading);
-  font-size: 30px;
-  font-weight: 900;
-  color: var(--neo-stroke);
-  line-height: 1;
-  letter-spacing: -0.03em;
-}
-
-.gauge-label {
-  font-size: 10.5px;
-  font-weight: 700;
-  color: var(--text-secondary);
-  margin-top: 2px;
-}
-
-/* ── Metric Capsule Grid ─────────────────────────────────────────────── */
-.metric-capsule-grid {
-  width: 100%;
+/* ── Provider Buttons ────────────────────────────────────────────────── */
+.provider-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-top: 12px;
-}
-
-.metric-capsule {
-  background: var(--neo-bg);
-  border: 2px solid var(--neo-stroke);
-  border-radius: 10px;
-  padding: 8px 10px;
-  display: flex;
-  align-items: center;
   gap: 8px;
-  box-shadow: 2px 2px 0px var(--neo-stroke);
-}
-
-.capsule-icon-box {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  border: 2px solid var(--neo-stroke);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.capsule-icon-box.orange { background: var(--neo-yellow); color: var(--neo-stroke); }
-.capsule-icon-box.cyan   { background: var(--neo-cyan);   color: var(--neo-stroke); }
-
-.capsule-data {
-  display: flex;
-  flex-direction: column;
-}
-
-.capsule-val {
-  font-family: var(--font-heading);
-  font-size: 16px;
-  font-weight: 800;
-  color: var(--neo-stroke);
-  line-height: 1.1;
-}
-
-.capsule-lbl {
-  font-size: 9.5px;
-  font-weight: 700;
-  color: var(--text-secondary);
-}
-
-.full-width-capsule {
-  grid-column: span 2;
-  justify-content: space-between;
-  padding: 7px 12px;
-}
-
-.capsule-val-inline {
-  font-family: var(--font-heading);
-  font-size: 15px;
-  font-weight: 800;
-  color: var(--neo-stroke);
-  background: var(--neo-mint);
-  padding: 1px 7px;
-  border: 1.5px solid var(--neo-stroke);
-  border-radius: 4px;
-}
-
-/* ── Provider Tab Pills ─────────────────────────────────────────────── */
-.provider-tab-pill {
-  display: flex;
-  gap: 4px;
-  background: var(--neo-bg);
-  padding: 4px;
-  border-radius: var(--radius-btn);
-  border: 2px solid var(--neo-stroke);
 }
 
 .provider-btn {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 5px;
-  padding: 5px 12px;
-  border-radius: 7px;
-  border: 2px solid transparent;
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: var(--font-heading);
+  justify-content: center;
+  gap: 3px;
+  padding: 10px 8px;
+  background: #FFFFFF;
+  border: 2.5px solid var(--neo-stroke);
+  border-radius: var(--radius-btn);
+  font-family: var(--font-family);
   font-size: 12px;
   font-weight: 800;
+  color: var(--neo-stroke);
   cursor: pointer;
+  box-shadow: 2px 2px 0px var(--neo-stroke);
   transition: var(--transition);
 }
 
 .provider-btn:hover {
-  color: var(--neo-stroke);
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0px var(--neo-stroke);
 }
 
 .provider-btn.active {
   background: var(--neo-yellow);
-  border-color: var(--neo-stroke);
-  color: var(--neo-stroke);
-  box-shadow: 2px 2px 0px var(--neo-stroke);
+  box-shadow: 3px 3px 0px var(--neo-stroke);
 }
 
-.orange-badge {
+.provider-icon {
+  font-size: 16px;
+}
+
+.badge {
   font-size: 8.5px;
-  font-weight: 900;
+  font-weight: 800;
   padding: 1px 5px;
   border-radius: 4px;
   background: var(--neo-stroke);
   color: #FFFFFF;
 }
 
-/* ── Dual Language Selection Bar ─────────────────────────────────────── */
-.dual-lang-bar {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 8px;
-  background: var(--neo-bg);
-  border: 2px solid var(--neo-stroke);
-  border-radius: var(--radius-lg);
-  padding: 10px 12px;
-  box-shadow: 3px 3px 0px var(--neo-stroke);
+.provider-btn.active .badge {
+  background: var(--neo-stroke);
+  color: var(--neo-yellow);
 }
 
-.lang-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.picker-label {
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-}
-
-.matte-select {
-  background: transparent;
-  border: none;
-  color: var(--neo-stroke);
-  font-family: var(--font-heading);
-  font-size: 14px;
-  font-weight: 800;
-  outline: none;
-  cursor: pointer;
-  padding-right: 14px;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%230F172A' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right center;
-}
-
-.matte-select option {
-  background: #FFFFFF;
-  color: var(--neo-stroke);
-}
-
-.swap-pill {
+/* ── Inputs ──────────────────────────────────────────────────────────── */
+.input-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: var(--neo-cyan);
-  border: 2px solid var(--neo-stroke);
-  color: var(--neo-stroke);
-  font-size: 15px;
-  font-weight: 800;
-  box-shadow: 2px 2px 0px var(--neo-stroke);
+  gap: 6px;
 }
 
-/* ── Input Controls ─────────────────────────────────────────────────── */
-.matte-input-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.matte-input {
+.text-input {
   flex: 1;
   background: #FFFFFF;
   border: 2px solid var(--neo-stroke);
   border-radius: var(--radius-btn);
   color: var(--neo-stroke);
-  font-family: var(--font-body);
-  font-size: 13px;
+  font-family: var(--font-family);
+  font-size: 12.5px;
   font-weight: 600;
-  padding: 9px 12px;
+  padding: 8px 10px;
   outline: none;
   box-shadow: 2px 2px 0px var(--neo-stroke);
   transition: var(--transition);
   min-width: 0;
 }
 
-.matte-input::placeholder {
-  color: var(--text-muted);
-}
-
-.matte-input:focus {
-  background: var(--neo-bg);
+.text-input:focus {
+  background: #FFFFEE;
   box-shadow: 3px 3px 0px var(--neo-stroke);
 }
 
-.action-icon-btn {
-  width: 36px;
-  height: 36px;
+.icon-btn {
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -541,38 +298,110 @@ input:checked + .matte-slider::before {
   background: #FFFFFF;
   border: 2px solid var(--neo-stroke);
   color: var(--neo-stroke);
+  font-size: 14px;
+  font-weight: 800;
   cursor: pointer;
   box-shadow: 2px 2px 0px var(--neo-stroke);
   transition: var(--transition);
   flex-shrink: 0;
 }
 
-.action-icon-btn:hover {
+.icon-btn:hover {
   transform: translate(-1px, -1px);
   box-shadow: 3px 3px 0px var(--neo-stroke);
 }
 
-.action-icon-btn:active {
-  transform: translate(1px, 1px);
-  box-shadow: 1px 1px 0px var(--neo-stroke);
+.icon-btn.accent {
+  background: var(--neo-cyan);
 }
 
-.action-icon-btn.highlight {
-  background: var(--neo-yellow);
+.hint {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
 }
 
-.orange-link {
-  font-size: 11px;
+.hint a {
   color: var(--neo-stroke);
   text-decoration: none;
   font-weight: 800;
   border-bottom: 2px solid var(--neo-orange);
 }
 
-.unit-badge {
-  font-size: 10px;
+/* ── Two-Column Layout ───────────────────────────────────────────────── */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.arrow-sep {
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--neo-stroke);
+  text-align: center;
+  margin-top: 14px;
+}
+
+.select-input {
+  width: 100%;
+  background: #FFFFFF;
+  border: 2px solid var(--neo-stroke);
+  border-radius: var(--radius-btn);
+  color: var(--neo-stroke);
+  font-family: var(--font-family);
+  font-size: 12px;
   font-weight: 800;
-  letter-spacing: 0.05em;
+  padding: 8px 6px;
+  outline: none;
+  cursor: pointer;
+  box-shadow: 2px 2px 0px var(--neo-stroke);
+  transition: var(--transition);
+}
+
+/* ── Display Options ─────────────────────────────────────────────────── */
+.option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  gap: 8px;
+}
+
+.option-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--neo-stroke);
+}
+
+.range-input {
+  flex: 1;
+  max-width: 140px;
+  height: 6px;
+  border-radius: 4px;
+  background: var(--neo-bg);
+  border: 2px solid var(--neo-stroke);
+  outline: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.range-input::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--neo-yellow);
+  border: 2px solid var(--neo-stroke);
+  box-shadow: 2px 2px 0px var(--neo-stroke);
+  cursor: pointer;
+}
+
+.unit-label {
+  font-size: 11px;
+  font-weight: 800;
   color: var(--neo-stroke);
   background: var(--neo-yellow);
   padding: 4px 8px;
@@ -581,124 +410,98 @@ input:checked + .matte-slider::before {
   box-shadow: 2px 2px 0px var(--neo-stroke);
 }
 
-.sub-note {
+/* ── Stats Section ───────────────────────────────────────────────────── */
+.stats-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.text-btn {
+  background: #FFFFFF;
+  border: 2px solid var(--neo-stroke);
+  color: var(--neo-stroke);
+  font-family: var(--font-family);
   font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 2px 7px;
+  border-radius: 5px;
+  box-shadow: 2px 2px 0px var(--neo-stroke);
+  transition: var(--transition);
+}
+
+.text-btn:hover {
+  background: var(--neo-pink);
+  color: #FFFFFF;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.stat-card {
+  background: var(--neo-bg);
+  border: 2px solid var(--neo-stroke);
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 2px 2px 0px var(--neo-stroke);
+}
+
+.stat-value {
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--neo-stroke);
+}
+
+.stat-label {
+  font-size: 9.5px;
   font-weight: 700;
   color: var(--text-muted);
 }
 
-/* ── Settings Rows & Sliders ─────────────────────────────────────────── */
-.setting-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 12px;
-  gap: 12px;
-}
-
-.setting-row.vertical-stack {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-.setting-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--neo-stroke);
-}
-
-.slider-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-}
-
-.badge-tag {
-  font-family: var(--font-heading);
-  font-size: 11.5px;
-  font-weight: 800;
-  color: var(--neo-stroke);
-  background: var(--neo-cyan);
-  padding: 1px 7px;
-  border: 1.5px solid var(--neo-stroke);
-  border-radius: 5px;
-}
-
-.matte-range {
-  width: 100%;
-  height: 8px;
-  border-radius: 4px;
-  background: var(--neo-bg);
-  border: 2px solid var(--neo-stroke);
-  outline: none;
-  appearance: none;
-  cursor: pointer;
-}
-
-.matte-range::-webkit-slider-thumb {
-  appearance: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--neo-yellow);
-  border: 2.5px solid var(--neo-stroke);
-  box-shadow: 2px 2px 0px var(--neo-stroke);
-  cursor: pointer;
-  transition: var(--transition);
-}
-
-.matte-range::-webkit-slider-thumb:hover {
-  transform: scale(1.15);
-}
-
-/* ── Floating Primary Neobrutalism Button ────────────────────────────── */
-.app-footer {
+/* ── Footer ──────────────────────────────────────────────────────────── */
+.footer {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 14px 18px;
+  padding: 12px 16px;
   background: var(--neo-bg);
   border-top: 2.5px solid var(--neo-stroke);
   z-index: 30;
 }
 
-.primary-orange-btn {
+.save-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
   width: 100%;
-  padding: 13px;
+  padding: 12px;
   border: 2.5px solid var(--neo-stroke);
   border-radius: var(--radius-pill);
   background: var(--neo-yellow);
   color: var(--neo-stroke);
-  font-family: var(--font-heading);
-  font-size: 15px;
+  font-family: var(--font-family);
+  font-size: 14px;
   font-weight: 800;
-  letter-spacing: 0.02em;
   cursor: pointer;
-  box-shadow: 4px 4px 0px var(--neo-stroke);
+  box-shadow: 3px 3px 0px var(--neo-stroke);
   transition: var(--transition);
 }
 
-.primary-orange-btn:hover {
-  transform: translate(-2px, -2px);
-  box-shadow: 6px 6px 0px var(--neo-stroke);
+.save-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0px var(--neo-stroke);
   background: #FFE633;
 }
 
-.primary-orange-btn:active {
-  transform: translate(2px, 2px);
-  box-shadow: 2px 2px 0px var(--neo-stroke);
-}
-
-.primary-orange-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
+.save-btn:active {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0px var(--neo-stroke);
 }

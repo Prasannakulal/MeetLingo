@@ -414,7 +414,7 @@
         const textToTranslate = untranslatedSentences.join(' ');
         this._flushNow(speaker, textToTranslate, textToTranslate);
       } else {
-        // Handle trailing unpunctuated clause if speaker pauses
+        // Handle trailing unpunctuated clause during active speech (updates active card in-place)
         this.debounceTimer = setTimeout(() => {
           const trailing = this._getTrailingUnpunctuatedClause(this.currentText);
           if (trailing) {
@@ -464,8 +464,7 @@
       if (!lastSegment) return null;
 
       const norm = lastSegment.toLowerCase().replace(/[^\w\s]/g, '');
-      if (norm.length >= 3 && !this.sessionTranslatedSentences.has(norm)) {
-        this.sessionTranslatedSentences.add(norm);
+      if (norm.length >= 3) {
         return lastSegment;
       }
       return null;
@@ -574,8 +573,7 @@
 
       const style = document.createElement('style');
       style.textContent = `
-        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@600;700;800&family=Inter:wght@500;600;700&display=swap');
-        :host { all: initial; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+        :host { all: initial; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         
         .ml-card {
           pointer-events: auto;
@@ -1514,7 +1512,24 @@
         this._attachObserver(container);
       }
 
-      // 1. Check for data-tid message entries (Work Teams)
+      // 1. Direct Teams Personal & Work caption text selector (exact data-tid attribute match)
+      const captionTextEls = container.querySelectorAll('[data-tid="closed-caption-text"], [data-tid="caption-text"]');
+      if (captionTextEls.length > 0) {
+        for (const textEl of captionTextEls) {
+          const text = textEl.textContent?.trim();
+          if (!text || text.length < 2) continue;
+          if (this._isTeamsNotification(text)) continue;
+
+          const row = textEl.closest('.___18l92v8, [class*="ChatMessageCompact" i], [data-tid*="caption" i], div');
+          const authorEl = row?.querySelector('[data-tid="author"], .fui-ChatMessageCompact__author, [class*="author" i]');
+
+          const speaker = (authorEl?.textContent || '').trim() || 'Speaker';
+          this._emitChunk(speaker, text);
+        }
+        return;
+      }
+
+      // Fallback: Check for data-tid message entries (Work Teams)
       const tidEntries = container.querySelectorAll('[data-tid="closed-caption-chat-message"]');
       if (tidEntries.length > 0) {
         const last = tidEntries[tidEntries.length - 1];
@@ -1545,7 +1560,7 @@
 
       if (lines.length >= 2) {
         speaker = lines[0];
-        text = lines.slice(1).join(' ');
+        text = lines[lines.length - 1];
       } else if (lines.length === 1) {
         text = lines[0];
       }
