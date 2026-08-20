@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MeetLingo – Resizable Neobrutalism Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;700;800;900&family=Inter:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    body {
+      width: 100vw;
+      height: 100vh;
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: #F4F0EA;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Mock Google Meet Video Grid Background */
+    .mock-video-grid {
+      position: absolute;
+      inset: 20px;
+      right: 400px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      opacity: 0.85;
+      pointer-events: none;
+    }
+
+    .mock-participant {
+      background: #FFFFFF;
+      border: 3px solid #0F172A;
+      border-radius: 16px;
+      box-shadow: 4px 4px 0px #0F172A;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .mock-avatar {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: #FFDE00;
+      border: 3px solid #0F172A;
+      box-shadow: 3px 3px 0px #0F172A;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Outfit', sans-serif;
+      font-size: 32px;
+      font-weight: 800;
+      color: #0F172A;
+    }
+
+    .mock-name {
+      position: absolute;
+      bottom: 16px;
+      left: 20px;
+      background: #0F172A;
+      padding: 4px 10px;
+      border-radius: 8px;
+      color: #FFF;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    /* Bottom Floating Resizable Subtitle Card */
+    #overlay-container {
+      position: absolute;
+      bottom: 40px;
+      left: calc(50% - 190px);
+      transform: translateX(-50%);
+      z-index: 99;
+    }
+
+    .ml-card {
+      background: #FFFFFF;
+      border: 3px solid #0F172A;
+      box-shadow: 6px 6px 0px #0F172A;
+      color: #0F172A;
+      padding: 16px 22px 18px;
+      border-radius: 16px;
+      width: 540px;
+      min-width: 280px;
+      min-height: 110px;
+      resize: both;
+      overflow: auto;
+      position: relative;
+    }
+
+    .ml-drag {
+      position: absolute;
+      top: 12px;
+      right: 14px;
+      font-size: 12px;
+      font-weight: 800;
+      color: #0F172A;
+      padding: 2px 7px;
+      border-radius: 6px;
+      background: #FFDE00;
+      border: 2px solid #0F172A;
+      box-shadow: 2px 2px 0px #0F172A;
+    }
+
+    .ml-header-row { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+    
+    .ml-avatar-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #FFDE00;
+      border: 2px solid #0F172A;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #0F172A;
+      font-size: 11px;
+      font-weight: 800;
+      box-shadow: 2px 2px 0px #0F172A;
+    }
+
+    .ml-spk { font-family: 'Outfit', sans-serif; font-size: 13px; font-weight: 800; color: #0F172A; text-transform: uppercase; }
+    .ml-dot { width: 8px; height: 8px; border-radius: 50%; background: #00E699; border: 1.5px solid #0F172A; }
+    
+    .ml-trans { font-size: 17.5px; font-weight: 700; line-height: 1.45; color: #0F172A; }
+    .ml-divider { height: 2px; background: #0F172A; margin: 10px 0 8px; }
+    .ml-orig { font-size: 12.5px; font-weight: 600; color: #475569; line-height: 1.4; }
+
+    /* Right Resizable Neobrutalism Drawer Panel */
+    .drawer-panel {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 380px;
+      min-width: 260px;
+      max-width: 75vw;
+      background: #FFFDF6;
+      border-left: 3px solid #0F172A;
+      box-shadow: -10px 0px 0px rgba(15, 23, 42, 0.15);
+      display: flex;
+      flex-direction: column;
+      z-index: 100;
+    }
+
+    .resize-handle-left {
+      position: absolute;
+      top: 0;
+      left: -6px;
+      bottom: 0;
+      width: 12px;
+      cursor: ew-resize;
+      z-index: 10;
+      background: transparent;
+    }
+
+    .resize-handle-left:hover {
+      background: rgba(255, 222, 0, 0.6);
+      border-left: 2px solid #0F172A;
+    }
+
+    .drawer-header {
+      padding: 18px 20px 14px;
+      background: #FFDE00;
+      border-bottom: 2.5px solid #0F172A;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .header-top { display: flex; align-items: center; justify-content: space-between; }
+    .drawer-title { font-family: 'Outfit', sans-serif; font-size: 17px; font-weight: 800; color: #0F172A; }
+
+    .action-btn {
+      background: #FFFFFF;
+      border: 2px solid #0F172A;
+      border-radius: 8px;
+      color: #0F172A;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      box-shadow: 2px 2px 0px #0F172A;
+      cursor: pointer;
+    }
+
+    .search-box {
+      width: 100%;
+      background: #FFFFFF;
+      border: 2px solid #0F172A;
+      border-radius: 10px;
+      padding: 9px 12px;
+      color: #0F172A;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 2px 2px 0px #0F172A;
+    }
+
+    .messages-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .msg-card {
+      background: #FFFFFF;
+      border: 2.5px solid #0F172A;
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: 3px 3px 0px #0F172A;
+    }
+
+    .msg-meta { display: flex; align-items: center; justify-content: space-between; }
+    
+    .msg-speaker {
+      font-family: 'Outfit', sans-serif;
+      font-size: 12px;
+      font-weight: 800;
+      color: #0F172A;
+      text-transform: uppercase;
+      background: #FFDE00;
+      padding: 1px 6px;
+      border: 1.5px solid #0F172A;
+      border-radius: 4px;
+    }
+    
+    .msg-time { font-size: 11px; font-weight: 700; color: #64748B; }
+    .msg-trans { font-size: 14px; font-weight: 700; color: #0F172A; line-height: 1.45; }
+    .msg-orig { font-size: 12px; font-weight: 600; color: #475569; border-top: 2px solid #0F172A; padding-top: 6px; margin-top: 2px; }
+
+    .drawer-footer {
+      padding: 12px 20px;
+      background: #FFFFFF;
+      border-top: 2.5px solid #0F172A;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: #0F172A;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Mock Video Grid -->
+  <div class="mock-video-grid">
+    <div class="mock-participant">
+      <div class="mock-avatar">GK</div>
+      <div class="mock-name">Gautham Kulal</div>
+    </div>
+    <div class="mock-participant">
+      <div class="mock-avatar" style="background: #00E5FF;">PK</div>
+      <div class="mock-name">Prasanna Kulal (You)</div>
+    </div>
+  </div>
+
+  <!-- Bottom Floating Neobrutalism Subtitle Card -->
+  <div id="overlay-container">
+    <div class="ml-card">
+      <span class="ml-drag">⠿ DRAG</span>
+      <div class="ml-header-row">
+        <div class="ml-avatar-icon">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 4-4H8a4 4 0 0 4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <div class="ml-spk-info">
+          <span class="ml-spk">Gautham Kulal</span>
+          <span class="ml-dot"></span>
+        </div>
+      </div>
+      <div class="ml-trans">Both the subtitle card (bottom right corner) and sidebar drawer (left edge) are now fully resizable!</div>
+      <div class="ml-divider"></div>
+      <div class="ml-orig">Both the subtitle card (bottom right corner) and sidebar drawer (left edge) are now fully resizable!</div>
+    </div>
+  </div>
+
+  <!-- Right Real-Time Live Transcript Sidebar Drawer -->
+  <div class="drawer-panel" id="sidebar-drawer">
+    <div class="resize-handle-left" id="resize-handle" title="Drag to resize sidebar width"></div>
+    <div class="drawer-header">
+      <div class="header-top">
+        <span class="drawer-title">Live Transcript</span>
+        <button class="action-btn">Copy</button>
+      </div>
+      <input type="text" class="search-box" placeholder="Search transcript history..." />
+    </div>
+
+    <div class="messages-list">
+      <div class="msg-card">
+        <div class="msg-meta">
+          <span class="msg-speaker">Gautham Kulal</span>
+          <span class="msg-time">16:52:10</span>
+        </div>
+        <div class="msg-trans">Hello Prasanna, good afternoon! How are you doing today?</div>
+        <div class="msg-orig">Hello Prasanna, good afternoon! How are you doing today?</div>
+      </div>
+
+      <div class="msg-card">
+        <div class="msg-meta">
+          <span class="msg-speaker">Prasanna Kulal</span>
+          <span class="msg-time">16:52:45</span>
+        </div>
+        <div class="msg-trans">I am doing great Gautham! We are testing the real-time meeting translator.</div>
+        <div class="msg-orig">I am doing great Gautham! We are testing the real-time meeting translator.</div>
+      </div>
+
+      <div class="msg-card">
+        <div class="msg-meta">
+          <span class="msg-speaker">Gautham Kulal</span>
+          <span class="msg-time">16:53:20</span>
+        </div>
+        <div class="msg-trans">Both the subtitle card (bottom right corner) and sidebar drawer (left edge) are now fully resizable!</div>
+        <div class="msg-orig">Both the subtitle card (bottom right corner) and sidebar drawer (left edge) are now fully resizable!</div>
+      </div>
+    </div>
+
+    <div class="drawer-footer">
+      <span>3 Messages logged</span>
+      <span>Clear History</span>
+    </div>
+  </div>
+
+  <script>
+    // Drag to resize sidebar width on preview
+    const drawer = document.getElementById('sidebar-drawer');
+    const handle = document.getElementById('resize-handle');
+    let startX, startWidth;
+
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      startX = e.clientX;
+      startWidth = drawer.getBoundingClientRect().width;
+      const onMove = (ev) => {
+        const deltaX = startX - ev.clientX;
+        const newWidth = Math.max(260, Math.min(window.innerWidth * 0.8, startWidth + deltaX));
+        drawer.style.width = newWidth + 'px';
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  </script>
+
+</body>
+</html>

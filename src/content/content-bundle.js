@@ -3,7 +3,7 @@
  * Single self-contained content script injected into Google Meet.
  * No ES module imports — all code is inlined for Chrome MV3 compatibility.
  *
- * Modules inlined: CaptionObserver, SpeechTextBuffer, SubtitleOverlay, main orchestrator.
+ * Modules inlined: CaptionObserver, SpeechTextBuffer, SubtitleOverlay, TranscriptSidebar, main orchestrator.
  */
 
 (function () {
@@ -22,7 +22,7 @@
     TOGGLE_OVERLAY:   'TOGGLE_OVERLAY',
   };
 
-  // Meet notification patterns to IGNORE (these are UI toasts, not speech)
+  // Meet notification patterns to IGNORE (these are UI toasts, tooltips & green room text, not speech)
   const NOTIFICATION_PATTERNS = [
     /panel is (open|closed)/i,
     /is now (on|off|muted|unmuted)/i,
@@ -35,6 +35,70 @@
     /recording (started|stopped)/i,
     /\bpresenting\b/i,
     /^[^\s]{0,30}\s(joined|left)$/i,
+
+    // Pre-call green room & toolbar UI tooltips
+    /turn (on|off) (microphone|mic|camera|video)/i,
+    /\(⌘\s*\+\s*[a-z]\)/i,
+    /frame_person|visual_effects|more_vert|backgrounds and effects/i,
+    /more options for/i,
+    /ready to join/i,
+    /language\s+(english|hindi|spanish|french|german)/i,
+    /ask to join|join now/i,
+
+    // In-call UI controls, buttons & tooltips that are NOT speech
+    /raise hand/i,
+    /lower hand/i,
+    /emoji reaction/i,
+    /jump to the (bottom|top)/i,
+    /scroll to (bottom|top)/i,
+    /background colou?r/i,
+    /blur (your|my)? background/i,
+    /virtual background/i,
+    /more effects/i,
+    /apply (visual )?effect/i,
+    /open chat/i,
+    /close chat/i,
+    /chat with everyone/i,
+    /host controls/i,
+    /manage participants/i,
+    /view participants/i,
+    /screen (share|sharing)/i,
+    /share (your|my)? screen/i,
+    /stop sharing/i,
+    /breakout room/i,
+    /whiteboard/i,
+    /poll(s)?/i,
+    /q(&amp;|\s*&\s*|\s+and\s+)a/i,
+    /activities/i,
+    /settings/i,
+    /network (quality|status)/i,
+    /full screen/i,
+    /exit full screen/i,
+    /minimise|maximize/i,
+    /grid (view|layout)/i,
+    /spotlight/i,
+    /pin (participant|video)/i,
+    /unpin/i,
+    /remove from (call|meeting)/i,
+    /admit|deny/i,
+    /mute (all|everyone|participant)/i,
+    /copy (link|invite)/i,
+    /invite (people|more)/i,
+    /meeting (details|info)/i,
+    /locked meeting/i,
+    /noise cancel/i,
+    /audio settings/i,
+    /video settings/i,
+    /go back/i,
+    /close panel/i,
+    /open panel/i,
+    /send (a )?message/i,
+    /type a message/i,
+    /report (a )?problem/i,
+    /help/i,
+    /google workspace/i,
+    /default$/i,
+    /^(default|none|blur)$/i,
   ];
 
   const CAPTION_SELECTORS = {
@@ -64,7 +128,7 @@
     ],
   };
 
-  const DEBOUNCE_MS      = 450;
+  const DEBOUNCE_MS      = 1200;
   const FADE_AFTER_MS    = 8000;
   const POLL_INTERVAL_MS = 2000;
 
@@ -88,6 +152,8 @@
     start() {
       this._locateAndAttach();
       this._startPolling();
+      // Defer CC activation so Meet's toolbar has time to fully render
+      setTimeout(() => this._tryEnableCaptions(), 2000);
     }
 
     stop() {
@@ -117,36 +183,25 @@
       console.debug('[MeetLingo] Observer attached to:', label);
     }
 
-    /**
-     * 4-tier container detection:
-     * Tiers 1-3 use specific selectors with position validation.
-     * Tier 4 falls back to document.body — works for ANY obfuscated-class
-     * Meet caption container (e.g. <div class="ygicle VbkSUe">).
-     */
     _findContainer() {
-      // Tier 1: Known specific Meet CC jsname attributes
       for (const sel of CAPTION_SELECTORS.CONTAINER_SPECIFIC) {
         const el = document.querySelector(sel);
         if (el && this._isInContentArea(el)) return el;
       }
 
-      // Tier 2: ARIA selectors filtered by position
       for (const sel of CAPTION_SELECTORS.CONTAINER_ARIA) {
         const el = document.querySelector(sel);
         if (el && this._isInContentArea(el)) return el;
       }
 
-      // Tier 3: Any aria-live in the content area
       const allLive = document.querySelectorAll('[aria-live="polite"], [aria-live="assertive"]');
       for (const el of allLive) {
         if (this._isInContentArea(el)) return el;
       }
 
-      // Tier 4: Broad mode — observe entire body, filter inside _extractAndDispatch
       return document.body;
     }
 
-    /** Element must be in the main content zone (not toolbar, not controls bar). */
     _isInContentArea(el) {
       try {
         const rect = el.getBoundingClientRect();
@@ -156,18 +211,55 @@
     }
 
     _tryEnableCaptions() {
-      for (const sel of CAPTION_SELECTORS.CAPTION_BUTTON) {
+      // Wide net of selectors — Google Meet uses various jsname/aria-label combos across versions
+      const selectors = [
+        'button[jsname="r8qRAd"]',
+        'button[aria-label*="turn on captions" i]',
+        'button[aria-label*="turn on closed captions" i]',
+        'button[aria-label*="caption" i]',
+        'button[aria-label*="subtitle" i]',
+        'button[data-tooltip*="caption" i]',
+        'button[aria-label*="captions" i]',
+      ];
+
+      for (const sel of selectors) {
         const btn = document.querySelector(sel);
-        if (btn) {
-          if (btn.getAttribute('aria-pressed') !== 'true') btn.click();
-          return;
+        if (!btn || btn.offsetWidth === 0) continue;
+
+        const label = (btn.getAttribute('aria-label') || btn.textContent || '').toLowerCase();
+        const pressed = btn.getAttribute('aria-pressed');
+
+        // Already active — nothing to do
+        if (pressed === 'true' || label.includes('turn off') || label.includes('hide captions')) {
+          console.debug('[MeetLingo] CC already active');
+          return true;
         }
+
+        // Click to enable
+        console.debug('[MeetLingo] Enabling CC via:', sel, '| label:', label);
+        btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        btn.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true }));
+        btn.click();
+        return true;
       }
+
+      // Fallback: Google Meet keyboard shortcut 'c' to toggle captions
+      console.debug('[MeetLingo] No CC button found, trying keyboard shortcut "c"...');
+      document.body.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'c', code: 'KeyC', keyCode: 67, which: 67, bubbles: true, cancelable: true
+      }));
+      return false;
     }
 
     _startPolling() {
+      let attempts = 0;
       this.pollTimer = setInterval(() => {
-        // In broad mode keep observer alive; otherwise re-attach if container removed
+        // Retry auto-enabling captions for the first 15 seconds of entering meeting
+        if (attempts < 10) {
+          attempts++;
+          this._tryEnableCaptions();
+        }
+
         if (this.activeContainer === document.body) return;
         if (!this.activeContainer || !document.body.contains(this.activeContainer)) {
           this.activeContainer = null;
@@ -178,7 +270,6 @@
 
     _handleMutation(mutation) {
       if (mutation.type === 'characterData') {
-        // Direct text-node mutation — most reliable signal
         this._extractAndDispatch(mutation.target.parentElement, true);
         return;
       }
@@ -194,18 +285,11 @@
       }
     }
 
-    /**
-     * Walk from the mutated node upward to find the best "caption block":
-     *  - Leaf-like: mostly text, ≤8 child elements
-     *  - Substantial text (≥10 chars)
-     *  - In content area (broad-mode position check)
-     *  - Not a notification
-     */
     _extractAndDispatch(startNode, isCharData) {
+      if (!this._isInCall()) return;
       if (!startNode || startNode === document.body || startNode === document.documentElement) return;
 
       const isBroadMode = this.activeContainer === document.body;
-
       let el = startNode;
       let bestEl = null;
 
@@ -225,7 +309,6 @@
 
       if (!bestEl) return;
 
-      // In broad mode: enforce strict position check
       if (isBroadMode) {
         const rect = bestEl.getBoundingClientRect();
         const vh   = window.innerHeight;
@@ -236,13 +319,11 @@
       const text = (bestEl.innerText || bestEl.textContent || '').trim();
 
       if (!text || text.length < 10) return;
-      if (this._isNotification(text)) {
-        console.debug('[MeetLingo] Skipped notification:', text.slice(0, 60));
-        return;
-      }
-      if (text === this._lastRawText) return;  // Deduplicate
+      if (this._isNotification(text)) return;
 
+      if (text === this._lastRawText) return;
       this._lastRawText = text;
+
       const speakerName = this._extractSpeaker(bestEl);
       this.onChunk({ speaker: speakerName || 'Speaker', text, timestamp: Date.now() });
     }
@@ -254,14 +335,34 @@
       return false;
     }
 
+    _isInCall() {
+      // The ONLY reliable indicator of an active call is the "Leave call" / "End call" / "Hang up" button.
+      // Microphone & camera buttons also exist on the pre-call waiting room screen, so we MUST NOT use those.
+      const leaveBtn = document.querySelector(
+        'button[aria-label*="Leave call" i], button[aria-label*="End call" i], button[aria-label*="Hang up" i], button[jsname="CQlyd"]'
+      );
+      if (leaveBtn && leaveBtn.offsetWidth > 0) return true;
+
+      // Waiting room / green room: "Join now", "Ask to join", "Got it" button present -> NOT in call yet
+      const preCallBtn = document.querySelector('button[jsname="QkAvwb"], button[jsname="b3VHJd"]');
+      if (preCallBtn && preCallBtn.offsetWidth > 0) return false;
+
+      // Default: assume in-call if nothing explicitly says otherwise
+      return false;
+    }
+
     _extractSpeaker(el) {
-      for (const sel of CAPTION_SELECTORS.SPEAKER) {
-        const found = el.querySelector?.(sel);
-        if (found) {
-          return found.getAttribute('data-sender-name')
-              || found.getAttribute('alt')
-              || found.textContent.trim()
-              || null;
+      const candidates = [el, el.parentElement, el.previousElementSibling];
+      for (const c of candidates) {
+        if (!c) continue;
+        for (const sel of CAPTION_SELECTORS.SPEAKER) {
+          const found = c.querySelector?.(sel);
+          if (found) {
+            return found.getAttribute('data-sender-name')
+                || found.getAttribute('alt')
+                || found.textContent.trim()
+                || null;
+          }
         }
       }
       return el.getAttribute?.('data-sender-name') || null;
@@ -269,73 +370,123 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // SPEECH TEXT BUFFER
+  // SPEECH TEXT BUFFER (Global Session Deduplication & Zero-Token-Waste Engine)
   // ═══════════════════════════════════════════════════════════════════════════
   class SpeechTextBuffer {
     constructor(flushCallback) {
-      this.flushCallback   = flushCallback;
-      this.debounceTimer   = null;
-      this.lastFlushedText = '';
-      this.currentSpeaker  = null;
-      this.currentText     = '';
-      this.terminalRegex   = /[.!?…。！？\n][\s"'»\]\)]*$/;
+      this.flushCallback          = flushCallback;
+      this.debounceTimer          = null;
+      this.lastFlushedFullText    = '';
+      this.sessionTranslatedSentences = new Set(); // Global session cache (never cleared on pause!)
+      this.currentSpeaker         = null;
+      this.currentText            = '';
+      this.lastSpeechTime         = Date.now();
+      this.utteranceId            = Date.now();
     }
 
     push(payload) {
       const { speaker, text } = payload;
       if (!text || text.trim().length < 2) return;
 
-      if (this.currentSpeaker && speaker !== this.currentSpeaker) {
-        this._flushNow(this.currentSpeaker, this.currentText);
+      const now = Date.now();
+      const trimmedText = text.trim();
+
+      // If speaker changed or > 4 seconds of silence, finalize previous thought & start a NEW utterance block
+      if ((this.currentSpeaker && speaker !== this.currentSpeaker) || (now - this.lastSpeechTime > 4000)) {
+        this.forceFlush();
+        this.currentSpeaker = speaker;
+        this.currentText    = '';
+        this.lastFlushedFullText = '';
+        this.utteranceId    = now;
       }
 
       this.currentSpeaker = speaker;
-      this.currentText    = text.trim();
+      this.currentText    = trimmedText;
+      this.lastSpeechTime = now;
 
       clearTimeout(this.debounceTimer);
-      if (this.currentText === this.lastFlushedText) return;
+      if (this.currentText === this.lastFlushedFullText) return;
 
-      if (this.terminalRegex.test(this.currentText)) {
-        this._flushNow(speaker, this.currentText);
-        return;
+      // Extract ONLY untranslated sentences from the growing Google Meet DOM string
+      const untranslatedSentences = this._extractUntranslatedSentences(this.currentText);
+
+      if (untranslatedSentences.length > 0) {
+        const textToTranslate = untranslatedSentences.join(' ');
+        this._flushNow(speaker, textToTranslate, textToTranslate);
+      } else {
+        // Handle trailing unpunctuated clause during active speech (updates active card in-place)
+        this.debounceTimer = setTimeout(() => {
+          const trailing = this._getTrailingUnpunctuatedClause(this.currentText);
+          if (trailing) {
+            this._flushNow(this.currentSpeaker, trailing, trailing);
+          }
+        }, DEBOUNCE_MS);
       }
-
-      this.debounceTimer = setTimeout(() => {
-        this._flushNow(this.currentSpeaker, this.currentText);
-      }, DEBOUNCE_MS);
     }
 
     forceFlush() {
-      if (this.currentText && this.currentText !== this.lastFlushedText) {
-        this._flushNow(this.currentSpeaker || 'Speaker', this.currentText);
-      }
+      clearTimeout(this.debounceTimer);
     }
 
     reset() {
       clearTimeout(this.debounceTimer);
-      this.lastFlushedText = '';
-      this.currentSpeaker  = null;
-      this.currentText     = '';
+      this.lastFlushedFullText = '';
+      this.currentSpeaker      = null;
+      this.currentText         = '';
+      this.utteranceId         = Date.now();
+      // NOTE: sessionTranslatedSentences is deliberately NOT reset here to prevent re-translating old DOM sentences!
     }
 
-    _flushNow(speaker, fullText) {
-      clearTimeout(this.debounceTimer);
-      if (!fullText || fullText === this.lastFlushedText) return;
+    _extractUntranslatedSentences(fullText) {
+      // Split text by sentence terminals (. ! ? … ! ?)
+      const sentences = fullText.split(/(?<=[.!?…。！？])\s+/);
+      const untranslated = [];
 
-      let deltaText = fullText;
-      if (this.lastFlushedText && fullText.startsWith(this.lastFlushedText)) {
-        deltaText = fullText.slice(this.lastFlushedText.length).trim();
+      for (const sentence of sentences) {
+        const norm = sentence.trim().toLowerCase().replace(/[^\w\s]/g, '');
+        if (!norm || norm.length < 2) continue;
+
+        // Check if sentence is completed with terminal punctuation
+        const isComplete = /[.!?…。！？]$/.test(sentence.trim());
+
+        if (isComplete && !this.sessionTranslatedSentences.has(norm)) {
+          this.sessionTranslatedSentences.add(norm);
+          untranslated.push(sentence.trim());
+        }
       }
 
-      if (!deltaText || deltaText.length < 2) return;
+      return untranslated;
+    }
 
-      this.lastFlushedText = fullText;
-      this.flushCallback({ speaker, text: deltaText, fullText, timestamp: Date.now() });
+    _getTrailingUnpunctuatedClause(fullText) {
+      const sentences = fullText.split(/(?<=[.!?…。！？])\s+/);
+      const lastSegment = sentences[sentences.length - 1]?.trim();
+      if (!lastSegment) return null;
+
+      const norm = lastSegment.toLowerCase().replace(/[^\w\s]/g, '');
+      if (norm.length >= 3) {
+        return lastSegment;
+      }
+      return null;
+    }
+
+    _flushNow(speaker, textToTranslate, originalText) {
+      clearTimeout(this.debounceTimer);
+      if (!textToTranslate || textToTranslate.trim().length < 2) return;
+
+      this.lastFlushedFullText = this.currentText;
+      this.flushCallback({
+        speaker,
+        text: textToTranslate.trim(),
+        fullText: originalText.trim(),
+        utteranceId: this.utteranceId,
+        timestamp: Date.now(),
+      });
     }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // SUBTITLE OVERLAY (Shadow DOM)
+  // SUBTITLE OVERLAY (Shadow DOM Floating Bottom Card)
   // ═══════════════════════════════════════════════════════════════════════════
   class SubtitleOverlay {
     constructor() {
@@ -350,15 +501,17 @@
 
     show({ speaker, translatedText, originalText }) {
       if (!this.card) return;
-      const color = this._speakerColor(speaker);
 
-      this.shadow.getElementById('ml-spk').textContent  = speaker;
-      this.shadow.getElementById('ml-spk').style.color  = color;
+      this.shadow.getElementById('ml-spk').textContent   = speaker;
       this.shadow.getElementById('ml-trans').textContent = translatedText;
 
-      const origEl = this.shadow.getElementById('ml-orig');
-      origEl.textContent  = originalText;
-      origEl.style.display = this._settings.showOriginal && originalText ? 'block' : 'none';
+      const origEl    = this.shadow.getElementById('ml-orig');
+      const dividerEl = this.shadow.getElementById('ml-divider');
+      
+      const hasOrig = this._settings.showOriginal && originalText;
+      origEl.textContent      = originalText;
+      origEl.style.display    = hasOrig ? 'block' : 'none';
+      if (dividerEl) dividerEl.style.display = hasOrig ? 'block' : 'none';
 
       this.card.classList.remove('ml-hidden', 'ml-fade');
       this.card.classList.add('ml-visible');
@@ -369,8 +522,7 @@
 
     showError(msg) {
       if (!this.card) return;
-      this.shadow.getElementById('ml-spk').textContent  = '⚠ MeetLingo';
-      this.shadow.getElementById('ml-spk').style.color  = '#F87171';
+      this.shadow.getElementById('ml-spk').textContent   = '⚠ MeetLingo';
       this.shadow.getElementById('ml-trans').textContent = msg;
       this.shadow.getElementById('ml-orig').textContent  = '';
 
@@ -402,7 +554,6 @@
     }
 
     _init() {
-      // Remove any previous instance
       const old = document.getElementById('meetlingo-root');
       if (old) old.remove();
 
@@ -422,51 +573,105 @@
 
       const style = document.createElement('style');
       style.textContent = `
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-        :host { all: initial; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        :host { all: initial; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        
         .ml-card {
           pointer-events: auto;
-          background: rgba(10, 14, 30, 0.90);
-          backdrop-filter: blur(16px) saturate(180%);
-          -webkit-backdrop-filter: blur(16px) saturate(180%);
-          border: 1px solid rgba(255,255,255,0.10);
-          box-shadow: 0 8px 40px rgba(0,0,0,0.55), 0 0 80px rgba(56,189,248,0.06);
-          color: #F1F5F9;
-          padding: 14px 22px 16px;
+          background: #FFFFFF;
+          border: 3px solid #0F172A;
+          box-shadow: 6px 6px 0px #0F172A;
+          color: #0F172A;
+          padding: 16px 22px 18px;
           border-radius: 16px;
-          max-width: 700px;
-          min-width: 300px;
-          text-align: center;
+          max-width: 90vw;
+          min-width: 280px;
+          min-height: 100px;
+          resize: both;
+          overflow: auto;
+          text-align: left;
           cursor: grab;
           user-select: none;
-          transition: opacity 0.3s ease, transform 0.3s ease;
+          transition: opacity 0.2s ease, transform 0.2s ease;
           position: relative;
         }
+        
         .ml-card:active { cursor: grabbing; }
-        .ml-hidden  { opacity: 0; transform: translateY(6px); pointer-events: none; display: none; }
-        .ml-fade    { opacity: 0; transform: translateY(6px); }
+        .ml-hidden  { opacity: 0; transform: translateY(10px); pointer-events: none; display: none; }
+        .ml-fade    { opacity: 0; transform: translateY(10px); }
         .ml-visible { opacity: 1; transform: translateY(0); display: block; }
-        .ml-drag    { position: absolute; top: 6px; right: 10px; font-size: 12px; color: rgba(255,255,255,0.2); cursor: grab; }
-        .ml-drag:hover { color: rgba(255,255,255,0.5); }
-        .ml-spk-row { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 6px; }
-        .ml-dot     { width: 5px; height: 5px; border-radius: 50%; background: currentColor;
-                      animation: mlpulse 1.8s ease-in-out infinite; }
-        @keyframes mlpulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.6)} }
-        .ml-spk     { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; }
-        .ml-trans   { font-size: 17px; font-weight: 600; line-height: 1.45; color: #F8FAFC; }
-        .ml-orig    { font-size: 11.5px; color: #64748B; margin-top: 5px; font-style: italic; }
+        
+        .ml-drag    { position: absolute; top: 12px; right: 14px; font-size: 12px; font-weight: 800; color: #0F172A; cursor: grab; padding: 2px 7px; border-radius: 6px; background: #FFDE00; border: 2px solid #0F172A; box-shadow: 2px 2px 0px #0F172A; }
+        .ml-drag:hover { background: #FFE633; }
+        
+        .ml-header-row { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+        
+        .ml-avatar-icon {
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          background: #FFDE00;
+          border: 2px solid #0F172A;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #0F172A;
+          font-size: 11px;
+          font-weight: 800;
+          flex-shrink: 0;
+          box-shadow: 2px 2px 0px #0F172A;
+        }
+        
+        .ml-spk-info { display: flex; align-items: center; gap: 6px; }
+        .ml-dot      { width: 8px; height: 8px; border-radius: 50%; background: #00E699; border: 1.5px solid #0F172A; }
+        
+        .ml-spk {
+          font-family: 'Outfit', sans-serif;
+          font-size: 13px;
+          font-weight: 800;
+          letter-spacing: 0.04em;
+          color: #0F172A;
+          text-transform: uppercase;
+        }
+        
+        .ml-trans {
+          font-size: 17.5px;
+          font-weight: 700;
+          line-height: 1.45;
+          color: #0F172A;
+          letter-spacing: -0.01em;
+        }
+        
+        .ml-divider {
+          height: 2px;
+          background: #0F172A;
+          margin: 10px 0 8px;
+        }
+        
+        .ml-orig {
+          font-size: 12.5px;
+          font-weight: 600;
+          color: #475569;
+          line-height: 1.4;
+          font-style: normal;
+        }
       `;
       this.shadow.appendChild(style);
 
       this.card = document.createElement('div');
       this.card.className = 'ml-card ml-hidden';
       this.card.innerHTML = `
-        <span class="ml-drag" title="Drag to move">⠿</span>
-        <div class="ml-spk-row">
-          <span class="ml-dot"></span>
-          <span class="ml-spk" id="ml-spk"></span>
+        <span class="ml-drag" title="Drag overlay">⠿</span>
+        <div class="ml-header-row">
+          <div class="ml-avatar-icon">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 4-4H8a4 4 0 0 4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </div>
+          <div class="ml-spk-info">
+            <span class="ml-spk" id="ml-spk">Speaker</span>
+            <span class="ml-dot"></span>
+          </div>
         </div>
         <div class="ml-trans" id="ml-trans"></div>
+        <div class="ml-divider" id="ml-divider"></div>
         <div class="ml-orig"  id="ml-orig"></div>
       `;
       this.shadow.appendChild(this.card);
@@ -498,12 +703,904 @@
         document.addEventListener('mouseup',   onUp);
       });
     }
+  }
 
-    _speakerColor(name) {
-      if (!this.speakerMap.has(name)) {
-        this.speakerMap.set(name, SPEAKER_COLORS[this.speakerMap.size % SPEAKER_COLORS.length]);
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TRANSCRIPT SIDEBAR (Collapsible Liquid Glass History Drawer)
+  // ═══════════════════════════════════════════════════════════════════════════
+  class TranscriptSidebar {
+    constructor() {
+      this.hostEl         = null;
+      this.shadow         = null;
+      this.drawer         = null;
+      this.toggleBtn      = null;
+      this.messagesList   = null;
+      this.countBadge     = null;
+      this.history        = [];
+      this.isOpen         = false;
+      this.userIsScrolling = false;
+      this._init();
+    }
+
+    addEntry({ speaker, translatedText, originalText }) {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      
+      const entry = {
+        id:             Date.now() + Math.random().toString(36).substr(2, 4),
+        speaker:        speaker || 'Speaker',
+        translatedText: translatedText || '',
+        originalText:   originalText || '',
+        timeStr,
+      };
+
+      this.history.push(entry);
+      if (this.history.length > 500) this.history.shift(); // Cap memory
+
+      this._renderMessage(entry);
+      this._updateBadge();
+    }
+
+    destroy() {
+      if (this.hostEl) this.hostEl.remove();
+      this.hostEl = this.shadow = this.drawer = this.toggleBtn = null;
+    }
+
+    _init() {
+      const old = document.getElementById('meetlingo-sidebar-root');
+      if (old) old.remove();
+
+      this.hostEl = document.createElement('div');
+      this.hostEl.id = 'meetlingo-sidebar-root';
+      Object.assign(this.hostEl.style, {
+        position: 'fixed',
+        top: '0',
+        right: '0',
+        bottom: '0',
+        zIndex: '2147483646',
+        pointerEvents: 'none',
+      });
+      document.body.appendChild(this.hostEl);
+
+      this.shadow = this.hostEl.attachShadow({ mode: 'open' });
+
+      const style = document.createElement('style');
+      style.textContent = `
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+        :host { all: initial; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+
+        /* Neobrutalism Floating Trigger Tab */
+        .sidebar-toggle {
+          position: fixed;
+          top: 38%;
+          right: 0;
+          transform: translateY(-50%);
+          pointer-events: auto;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: #FFDE00;
+          border: 2.5px solid #0F172A;
+          border-right: none;
+          border-radius: 12px 0 0 12px;
+          padding: 10px 14px;
+          color: #0F172A;
+          font-family: 'Outfit', sans-serif;
+          font-size: 13px;
+          font-weight: 800;
+          letter-spacing: 0.02em;
+          cursor: pointer;
+          transition: all 0.15s ease-out;
+          box-shadow: -4px 4px 0px #0F172A;
+        }
+
+        .sidebar-toggle:hover {
+          background: #FFE633;
+          padding-left: 18px;
+        }
+
+        .toggle-icon { font-size: 15px; }
+        
+        .badge {
+          background: #0F172A;
+          color: #FFFFFF;
+          font-size: 10.5px;
+          font-weight: 900;
+          padding: 1px 7px;
+          border-radius: 99px;
+        }
+
+        /* Neobrutalism Drawer Panel */
+        .drawer-panel {
+          position: fixed;
+          top: 0;
+          right: 0;
+          bottom: 0;
+          width: 380px;
+          max-width: 90vw;
+          pointer-events: auto;
+          background: #FFFDF6;
+          border-left: 3px solid #0F172A;
+          box-shadow: -10px 0px 0px rgba(15, 23, 42, 0.15);
+          display: flex;
+          flex-direction: column;
+          transform: translateX(100%);
+          transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .resize-handle-left {
+          position: absolute;
+          top: 0;
+          left: -6px;
+          bottom: 0;
+          width: 12px;
+          cursor: ew-resize;
+          z-index: 10;
+          background: transparent;
+        }
+
+        .resize-handle-left:hover {
+          background: rgba(255, 222, 0, 0.5);
+          border-left: 2px solid #0F172A;
+        }
+
+        .drawer-panel.open {
+          transform: translateX(0);
+        }
+
+        /* Drawer Header */
+        .drawer-header {
+          padding: 18px 20px 14px;
+          background: #FFDE00;
+          border-bottom: 2.5px solid #0F172A;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .header-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        .drawer-title-group {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .drawer-title {
+          font-family: 'Outfit', sans-serif;
+          font-size: 17px;
+          font-weight: 800;
+          color: #0F172A;
+          letter-spacing: -0.02em;
+        }
+
+        .header-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .action-btn {
+          background: #FFFFFF;
+          border: 2px solid #0F172A;
+          border-radius: 8px;
+          color: #0F172A;
+          padding: 5px 10px;
+          font-size: 12px;
+          font-weight: 800;
+          cursor: pointer;
+          box-shadow: 2px 2px 0px #0F172A;
+          transition: all 0.15s ease;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+
+        .action-btn:hover {
+          transform: translate(-1px, -1px);
+          box-shadow: 3px 3px 0px #0F172A;
+        }
+
+        .close-btn {
+          background: #FFFFFF;
+          border: 2px solid #0F172A;
+          color: #0F172A;
+          font-size: 16px;
+          font-weight: 800;
+          cursor: pointer;
+          padding: 2px 7px;
+          border-radius: 8px;
+          box-shadow: 2px 2px 0px #0F172A;
+          transition: all 0.15s ease;
+        }
+
+        .close-btn:hover { background: #FF477E; color: #FFFFFF; }
+
+        .search-box {
+          width: 100%;
+          background: #FFFFFF;
+          border: 2px solid #0F172A;
+          border-radius: 10px;
+          padding: 9px 12px;
+          color: #0F172A;
+          font-size: 13px;
+          font-weight: 600;
+          outline: none;
+          box-shadow: 2px 2px 0px #0F172A;
+        }
+
+        .search-box::placeholder { color: #64748B; }
+
+        /* Scrollable Message List */
+        .messages-list {
+          flex: 1;
+          overflow-y: auto;
+          padding: 16px 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+        }
+
+        .messages-list::-webkit-scrollbar { width: 6px; }
+        .messages-list::-webkit-scrollbar-thumb { background: #0F172A; border-radius: 99px; }
+
+        .empty-state {
+          text-align: center;
+          color: #64748B;
+          font-size: 13px;
+          font-weight: 600;
+          margin: auto 0;
+          padding: 40px 20px;
+        }
+
+        /* Message Card */
+        .msg-card {
+          background: #FFFFFF;
+          border: 2.5px solid #0F172A;
+          border-radius: 12px;
+          padding: 12px 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          box-shadow: 3px 3px 0px #0F172A;
+          transition: all 0.15s ease;
+        }
+
+        .msg-card:hover {
+          transform: translate(-1px, -1px);
+          box-shadow: 4px 4px 0px #0F172A;
+        }
+
+        .msg-meta {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        .msg-speaker {
+          font-family: 'Outfit', sans-serif;
+          font-size: 12px;
+          font-weight: 800;
+          color: #0F172A;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          background: #FFDE00;
+          padding: 1px 6px;
+          border: 1.5px solid #0F172A;
+          border-radius: 4px;
+        }
+
+        .msg-time {
+          font-size: 11px;
+          font-weight: 700;
+          color: #64748B;
+        }
+
+        .msg-trans {
+          font-size: 14px;
+          font-weight: 700;
+          color: #0F172A;
+          line-height: 1.45;
+        }
+
+        .msg-orig {
+          font-size: 12px;
+          font-weight: 600;
+          color: #475569;
+          border-top: 2px solid #0F172A;
+          padding-top: 6px;
+          margin-top: 2px;
+        }
+
+        /* Drawer Footer */
+        .drawer-footer {
+          padding: 12px 20px;
+          background: #FFFFFF;
+          border-top: 2.5px solid #0F172A;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 11.5px;
+          font-weight: 700;
+          color: #0F172A;
+        }
+
+        .clear-btn {
+          background: #FFFFFF;
+          border: 1.5px solid #0F172A;
+          color: #0F172A;
+          font-size: 11px;
+          font-weight: 800;
+          cursor: pointer;
+          padding: 3px 8px;
+          border-radius: 6px;
+          box-shadow: 2px 2px 0px #0F172A;
+          transition: all 0.15s ease;
+        }
+
+        .clear-btn:hover { background: #FF477E; color: #FFFFFF; }
+      `;
+      this.shadow.appendChild(style);
+
+      // 1. Build Toggle Button
+      this.toggleBtn = document.createElement('button');
+      this.toggleBtn.className = 'sidebar-toggle';
+      this.toggleBtn.innerHTML = `
+        <span>Transcript</span>
+        <span class="badge" id="count-badge">0</span>
+      `;
+      this.toggleBtn.addEventListener('click', () => this.toggle());
+      this.shadow.appendChild(this.toggleBtn);
+
+      // 2. Build Sliding Drawer Panel with Left Resize Handle
+      this.drawer = document.createElement('div');
+      this.drawer.className = 'drawer-panel';
+      this.drawer.innerHTML = `
+        <div class="resize-handle-left" title="Drag to resize sidebar width"></div>
+        <div class="drawer-header">
+          <div class="header-top">
+            <div class="drawer-title-group">
+              <span class="drawer-title">Live Transcript</span>
+            </div>
+            <div class="header-actions">
+              <button class="action-btn" id="btn-copy" title="Copy full transcript">Copy</button>
+              <button class="close-btn" id="btn-close" title="Close">✕</button>
+            </div>
+          </div>
+          <input type="text" class="search-box" id="search-input" placeholder="Search transcript history..." />
+        </div>
+
+        <div class="messages-list" id="messages-list">
+          <div class="empty-state">No speech logged yet. Captions will appear here in real time.</div>
+        </div>
+
+        <div class="drawer-footer">
+          <span id="total-count-label">0 Messages logged</span>
+          <button class="clear-btn" id="btn-clear">Clear History</button>
+        </div>
+      `;
+      this.shadow.appendChild(this.drawer);
+
+      // DOM refs inside Shadow DOM
+      this.messagesList = this.shadow.getElementById('messages-list');
+      this.countBadge   = this.shadow.getElementById('count-badge');
+
+      // Attach Event Listeners
+      this.shadow.getElementById('btn-close').addEventListener('click', () => this.close());
+      this.shadow.getElementById('btn-clear').addEventListener('click', () => this.clearHistory());
+      this.shadow.getElementById('btn-copy').addEventListener('click', () => this.copyTranscript());
+      
+      const searchInput = this.shadow.getElementById('search-input');
+      searchInput.addEventListener('input', (e) => this._filterMessages(e.target.value));
+
+      // Make sidebar width resizable via left handle
+      this._makeResizable();
+
+      // Track user scroll position (so auto-scroll stops when reading old messages)
+      this.messagesList.addEventListener('scroll', () => {
+        const { scrollTop, scrollHeight, clientHeight } = this.messagesList;
+        this.userIsScrolling = (scrollHeight - scrollTop - clientHeight) > 40;
+      });
+    }
+
+    toggle() {
+      this.isOpen ? this.close() : this.open();
+    }
+
+    open() {
+      this.isOpen = true;
+      this.drawer.classList.add('open');
+      this._scrollToBottom(true);
+    }
+
+    close() {
+      this.isOpen = false;
+      this.drawer.classList.remove('open');
+    }
+
+    clearHistory() {
+      this.history = [];
+      this.messagesList.innerHTML = `<div class="empty-state">Transcript cleared.</div>`;
+      this._updateBadge();
+    }
+
+    copyTranscript() {
+      if (this.history.length === 0) return;
+      const text = this.history.map(m => `[${m.timeStr}] ${m.speaker}: ${m.translatedText} (${m.originalText})`).join('\n\n');
+      navigator.clipboard.writeText(text).then(() => {
+        const copyBtn = this.shadow.getElementById('btn-copy');
+        copyBtn.textContent = '✓ Copied!';
+        setTimeout(() => copyBtn.textContent = '📋 Copy', 2000);
+      });
+    }
+
+    updateOrAddEntry({ utteranceId, speaker, translatedText, originalText }) {
+      const existing = this.history.find(item => item.utteranceId === utteranceId);
+
+      if (existing) {
+        // Update existing entry in place with latest clean translation & original text
+        if (translatedText) existing.translatedText = translatedText;
+        if (originalText)   existing.originalText   = originalText;
+
+        this._updateCardElement(existing);
+      } else {
+        // Create new entry
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        
+        const entry = {
+          utteranceId:   utteranceId || Date.now(),
+          id:             Date.now() + Math.random().toString(36).substr(2, 4),
+          speaker:        speaker || 'Speaker',
+          translatedText: translatedText || '',
+          originalText:   originalText || '',
+          timeStr,
+        };
+
+        this.history.push(entry);
+        if (this.history.length > 500) this.history.shift();
+
+        this._renderMessage(entry);
+        this._updateBadge();
       }
-      return this.speakerMap.get(name);
+    }
+
+    _updateCardElement(entry) {
+      const card = this.messagesList.querySelector(`[data-utterance-id="${entry.utteranceId}"]`);
+      if (!card) return;
+
+      const transEl = card.querySelector('.msg-trans');
+      const origEl  = card.querySelector('.msg-orig');
+
+      if (transEl) transEl.textContent = entry.translatedText;
+      if (origEl)  origEl.textContent  = entry.originalText;
+      card.setAttribute('data-text', (entry.translatedText + ' ' + entry.originalText + ' ' + entry.speaker).toLowerCase());
+
+      if (!this.userIsScrolling) {
+        this._scrollToBottom();
+      }
+    }
+
+    _renderMessage(entry) {
+      const emptyState = this.messagesList.querySelector('.empty-state');
+      if (emptyState) emptyState.remove();
+
+      const card = document.createElement('div');
+      card.className = 'msg-card';
+      card.setAttribute('data-utterance-id', entry.utteranceId);
+      card.setAttribute('data-text', (entry.translatedText + ' ' + entry.originalText + ' ' + entry.speaker).toLowerCase());
+      card.innerHTML = `
+        <div class="msg-meta">
+          <span class="msg-speaker">${this._escape(entry.speaker)}</span>
+          <span class="msg-time">${entry.timeStr}</span>
+        </div>
+        <div class="msg-trans">${this._escape(entry.translatedText)}</div>
+        ${entry.originalText ? `<div class="msg-orig">${this._escape(entry.originalText)}</div>` : ''}
+      `;
+      this.messagesList.appendChild(card);
+
+      if (!this.userIsScrolling) {
+        this._scrollToBottom();
+      }
+    }
+
+    _filterMessages(query) {
+      const q = query.trim().toLowerCase();
+      const cards = this.messagesList.querySelectorAll('.msg-card');
+      cards.forEach(card => {
+        const txt = card.getAttribute('data-text') || '';
+        card.style.display = (!q || txt.includes(q)) ? 'flex' : 'none';
+      });
+    }
+
+    _updateBadge() {
+      const count = this.history.length;
+      if (this.countBadge) this.countBadge.textContent = count;
+      const lbl = this.shadow.getElementById('total-count-label');
+      if (lbl) lbl.textContent = `${count} Message${count === 1 ? '' : 's'} logged`;
+    }
+
+    _makeResizable() {
+      const handle = this.shadow.querySelector('.resize-handle-left');
+      if (!handle) return;
+
+      let startX, startWidth;
+
+      const onMouseMove = (e) => {
+        const deltaX = startX - e.clientX;
+        const newWidth = Math.max(260, Math.min(window.innerWidth * 0.8, startWidth + deltaX));
+        this.drawer.style.width = newWidth + 'px';
+      };
+
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        this.drawer.style.transition = 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)';
+      };
+
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        startX = e.clientX;
+        startWidth = this.drawer.getBoundingClientRect().width;
+        this.drawer.style.transition = 'none'; // Instant response while dragging
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+    }
+
+    _scrollToBottom(force = false) {
+      if (force || !this.userIsScrolling) {
+        this.messagesList.scrollTop = this.messagesList.scrollHeight;
+      }
+    }
+
+    _escape(str) {
+      return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PLATFORM DETECTION
+  // ═══════════════════════════════════════════════════════════════════════════
+  const Platform = {
+    isGoogleMeet: () => location.hostname === 'meet.google.com',
+    isMSTeams:    () => location.hostname.includes('teams.microsoft.com') || location.hostname.includes('teams.live.com'),
+  };
+
+  // Emit a visible marker so we can confirm injection in DevTools
+  console.log(
+    `%c[MeetLingo] Content script injected on: ${location.hostname} (${location.pathname})`,
+    'background:#FFDE00;color:#000;font-weight:bold;padding:2px 6px;border-radius:3px'
+  );
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TEAMS NOTIFICATION PATTERNS (UI noise & system toasts to ignore on Teams)
+  // ═══════════════════════════════════════════════════════════════════════════
+  const TEAMS_NOTIFICATION_PATTERNS = [
+    /raise hand/i,
+    /lower hand/i,
+    /react/i,
+    /more actions/i,
+    /share (content|screen)/i,
+    /stop sharing/i,
+    /open chat/i,
+    /show chat/i,
+    /people/i,
+    /participants/i,
+    /apps/i,
+    /settings/i,
+    /leave/i,
+    /end meeting/i,
+    /camera (on|off)/i,
+    /microphone (on|off)/i,
+    /mute|unmute/i,
+    /turn (on|off)/i,
+    /recording (started|stopped)/i,
+    /background/i,
+    /breakout room/i,
+    /whiteboard/i,
+    /activities/i,
+    /hand raised/i,
+    /spotlight/i,
+    /pin/i,
+    /incoming video/i,
+    /audio (on|off)/i,
+    /video (on|off)/i,
+    /waiting/i,
+    /lobby/i,
+    /device settings/i,
+    /meeting options/i,
+    /full screen/i,
+    /exit full/i,
+    /send message/i,
+
+    // Caption & transcript status announcements (system notifications)
+    /caption.{0,30}(started|stopped|turned|enabled|disabled|on|off)/i,
+    /closed caption/i,
+    /クローズドキャプション/i,
+    /字幕/i,
+    /transcription.{0,30}(started|stopped|turned|enabled|disabled|on|off)/i,
+    /privacy policy/i,
+  ];
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TEAMS OBSERVER (Microsoft Teams Web)
+  // ═══════════════════════════════════════════════════════════════════════════
+  class TeamsObserver {
+    constructor(onChunk) {
+      this.onChunk         = onChunk;
+      this.observer        = null;
+      this.pollTimer       = null;
+      this._seenIds        = new Set();   // Track seen caption entries by content hash
+      this._lastSpeaker    = null;
+      this._currentContainer = null;
+    }
+
+    start() {
+      this._startPolling();
+      // Defer CC activation 3s to let Teams call UI fully render
+      setTimeout(() => this._tryEnableCaptions(), 3000);
+      setTimeout(() => this._tryEnableCaptions(), 6000); // second attempt
+    }
+
+    stop() {
+      if (this.observer)  { this.observer.disconnect(); this.observer = null; }
+      if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+      this._currentContainer = null;
+    }
+
+    _isInCall() {
+      return !!this._findLeaveButton();
+    }
+
+    _findLeaveButton() {
+      // Find the visible Leave button in the call toolbar
+      const byTid = document.querySelector('[data-tid="hangup-button"], [data-tid="leave-button"]');
+      if (byTid && byTid.offsetWidth > 0) return byTid;
+
+      const byAria = document.querySelector('button[aria-label*="Leave" i], button[aria-label*="Hang up" i], button[aria-label*="End call" i]');
+      if (byAria && byAria.offsetWidth > 0) return byAria;
+
+      for (const btn of document.querySelectorAll('button')) {
+        if (btn.offsetWidth === 0) continue;
+        const spans = btn.querySelectorAll('span, div');
+        for (const s of spans) {
+          const txt = s.textContent?.trim().toLowerCase();
+          if (txt === 'leave' || txt === 'hang up' || txt === 'end call') return btn;
+        }
+      }
+      return null;
+    }
+
+    _tryEnableCaptions() {
+      if (!this._isInCall()) return;
+
+      // If captions container already exists, captions are already on
+      const container = this._findCaptionContainer();
+      if (container) {
+        console.debug('[MeetLingo/Teams] Captions already active');
+        this._attachObserver(container);
+        return;
+      }
+
+      // Step 1: Try direct CC button (sometimes visible on toolbar)
+      const directBtn = document.querySelector(
+        'button[aria-label*="live captions" i], button[aria-label*="Turn on captions" i]'
+      );
+      if (directBtn && directBtn.offsetWidth > 0) {
+        console.debug('[MeetLingo/Teams] Clicking direct CC button');
+        directBtn.click();
+        return;
+      }
+
+      // Step 2: Find the call-TOOLBAR More button specifically.
+      const leaveBtn = this._findLeaveButton();
+      let moreBtn = null;
+
+      if (leaveBtn) {
+        let toolbar = leaveBtn.parentElement;
+        for (let i = 0; i < 6 && toolbar; i++) {
+          const candidate = Array.from(toolbar.querySelectorAll('button')).find(b => {
+            if (!b.offsetWidth) return false;
+            const label = (b.getAttribute('aria-label') || '').toLowerCase();
+            const text  = (b.textContent || '').trim().toLowerCase();
+            return label === 'more' || text === 'more';
+          });
+          if (candidate) { moreBtn = candidate; break; }
+          toolbar = toolbar.parentElement;
+        }
+      }
+
+      if (moreBtn) {
+        console.debug('[MeetLingo/Teams] Opening call-toolbar More menu...');
+        moreBtn.click();
+
+        setTimeout(() => {
+          const menuItem = Array.from(
+            document.querySelectorAll('[role="menuitem"], [role="option"], li[class*="menu"], div[class*="menu-item"]')
+          ).find(el => {
+            const t = (el.textContent || el.getAttribute('aria-label') || '').toLowerCase();
+            return (t.includes('caption') || t.includes('language') || t.includes('speech')) && el.offsetWidth > 0;
+          });
+
+          if (menuItem) {
+            console.debug('[MeetLingo/Teams] Found menu item:', menuItem.textContent.trim());
+            menuItem.click();
+            setTimeout(() => {
+              const subItem = Array.from(document.querySelectorAll('[role="menuitem"], button, li')).find(el => {
+                const t = (el.textContent || '').toLowerCase();
+                return t.includes('turn on') && t.includes('caption') && el.offsetWidth > 0;
+              });
+              if (subItem) {
+                console.debug('[MeetLingo/Teams] Clicking Turn on live captions');
+                subItem.click();
+              }
+            }, 600);
+          } else {
+            // Nothing found — close the menu
+            console.debug('[MeetLingo/Teams] No captions item in More menu, closing.');
+            document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+          }
+        }, 800);
+      }
+    }
+
+
+    _attachObserver(container) {
+      if (this.observer) this.observer.disconnect();
+
+      this.observer = new MutationObserver(() => this._scanCaptions());
+      this.observer.observe(container, { childList: true, subtree: true, characterData: true });
+      console.debug('[MeetLingo/Teams] Observer attached to captions container');
+
+      // Initial scan of any existing entries
+      this._scanCaptions();
+    }
+
+    _findCaptionContainer() {
+      // 1. Specific Teams caption data-tid attributes
+      const byTid = document.querySelector(
+        '[data-tid="closed-caption-v2-virtual-list-content"], [data-tid="closed-captions-renderer"], [data-tid="closed-captions-container"]'
+      );
+      if (byTid && byTid.offsetWidth > 0) return byTid;
+
+      // 2. Specific class/aria selectors for caption overlays
+      for (const sel of [
+        'div[class*="caption" i]', 'div[class*="Caption" i]',
+        'div[class*="subtitle" i]', 'div[class*="Subtitle" i]',
+        '[role="region"][aria-label*="caption" i]',
+        '[role="log"][aria-label*="caption" i]',
+      ]) {
+        const els = document.querySelectorAll(sel);
+        for (const el of els) {
+          if (!el || el.offsetWidth < 100 || el.offsetHeight < 20) continue;
+          const txt = el.textContent?.trim() || '';
+          if (txt.length > 2 && !this._isTeamsNotification(txt)) return el;
+        }
+      }
+
+      // 3. Fallback: Search bottom 35% of the viewport for a visible container displaying captions
+      const vh = window.innerHeight;
+      const allDivs = document.querySelectorAll('div');
+      for (const el of allDivs) {
+        if (el.children.length > 15) continue; // Skip broad layout wrappers
+        const rect = el.getBoundingClientRect();
+        // Check if positioned near bottom of viewport
+        if (rect.width > 200 && rect.height > 30 && rect.top > vh * 0.60 && rect.bottom <= vh + 10) {
+          const txt = el.textContent?.trim() || '';
+          if (txt.length >= 3 && !this._isTeamsNotification(txt)) {
+            // Check if it's not the main call grid or chat panel
+            const isControl = el.querySelector('button[aria-label*="Leave" i], button[aria-label*="Mic" i]');
+            if (!isControl) return el;
+          }
+        }
+      }
+
+      return null;
+    }
+
+    _scanCaptions() {
+      const container = this._findCaptionContainer();
+      if (!container) return;
+
+      if (!this.observer || this._currentContainer !== container) {
+        this._currentContainer = container;
+        this._attachObserver(container);
+      }
+
+      // 1. Direct Teams Personal & Work caption text selector (exact data-tid attribute match)
+      const captionTextEls = container.querySelectorAll('[data-tid="closed-caption-text"], [data-tid="caption-text"]');
+      if (captionTextEls.length > 0) {
+        for (const textEl of captionTextEls) {
+          const text = textEl.textContent?.trim();
+          if (!text || text.length < 2) continue;
+          if (this._isTeamsNotification(text)) continue;
+
+          const row = textEl.closest('.___18l92v8, [class*="ChatMessageCompact" i], [data-tid*="caption" i], div');
+          const authorEl = row?.querySelector('[data-tid="author"], .fui-ChatMessageCompact__author, [class*="author" i]');
+
+          const speaker = (authorEl?.textContent || '').trim() || 'Speaker';
+          this._emitChunk(speaker, text);
+        }
+        return;
+      }
+
+      // Fallback: Check for data-tid message entries (Work Teams)
+      const tidEntries = container.querySelectorAll('[data-tid="closed-caption-chat-message"]');
+      if (tidEntries.length > 0) {
+        const last = tidEntries[tidEntries.length - 1];
+        const speakerEl = last.querySelector('.ui-chat__message__author, [data-tid="closed-caption-author"]');
+        const textEl    = last.querySelector('[data-tid="closed-caption-text"]');
+        if (textEl) {
+          this._emitChunk(
+            (speakerEl?.textContent || '').trim() || 'Speaker',
+            (textEl.textContent || '').trim()
+          );
+          return;
+        }
+      }
+
+      // 2. Generic caption box scan (Teams Live / Personal Teams)
+      // Extract all text nodes, excluding button labels/icons (like settings gear, thumbs up/down, close X)
+      const clone = container.cloneNode(true);
+      const actionButtons = clone.querySelectorAll('button, [role="button"], svg, i');
+      actionButtons.forEach(b => b.remove());
+
+      const textContent = clone.textContent?.trim() || '';
+      if (!textContent || textContent.length < 2) return;
+
+      // Extract lines from the cleaned text
+      const lines = textContent.split('\n').map(l => l.trim()).filter(Boolean);
+      let speaker = 'Speaker';
+      let text = textContent;
+
+      if (lines.length >= 2) {
+        speaker = lines[0];
+        text = lines[lines.length - 1];
+      } else if (lines.length === 1) {
+        text = lines[0];
+      }
+
+      this._emitChunk(speaker, text);
+    }
+
+    _emitChunk(speaker, text) {
+      if (!text || text.length < 3) return;
+      if (this._isTeamsNotification(text)) return;
+
+      const hash = `${speaker}::${text}`;
+      if (this._seenIds.has(hash)) return;
+      this._seenIds.add(hash);
+
+      console.debug('[MeetLingo/Teams] Caption chunk:', speaker, '->', text);
+      this.onChunk({ speaker, text, timestamp: Date.now() });
+    }
+
+    _isTeamsNotification(text) {
+      for (const pattern of TEAMS_NOTIFICATION_PATTERNS) {
+        if (pattern.test(text)) return true;
+      }
+      return false;
+    }
+
+    _startPolling() {
+      let attempts = 0;
+      this.pollTimer = setInterval(() => {
+        if (attempts < 20) {
+          attempts++;
+          const container = this._findCaptionContainer();
+          if (container) {
+            if (!this.observer) this._attachObserver(container);
+          } else {
+            // Container not found yet — try to enable captions
+            if (attempts <= 10) this._tryEnableCaptions();
+          }
+        }
+      }, 2000);
     }
   }
 
@@ -513,6 +1610,7 @@
   let observer = null;
   let buffer   = null;
   let overlay  = null;
+  let sidebar  = null;
   let settings = null;
   let running  = false;
 
@@ -522,8 +1620,9 @@
       if (!res?.success) { console.warn('[MeetLingo] Could not load settings'); return; }
 
       settings = res.settings;
-      if (!settings.enabled) return;
-      startPipeline();
+      // On Teams: the call-presence DOM poller handles pipeline startup — don't start here
+      // On Meet: start immediately if enabled
+      if (Platform.isGoogleMeet() && settings.enabled) startPipeline();
     } catch (err) {
       console.error('[MeetLingo] Bootstrap error:', err);
     }
@@ -536,8 +1635,10 @@
     overlay = new SubtitleOverlay();
     overlay.applySettings(settings);
 
+    sidebar = new TranscriptSidebar();
+
     buffer = new SpeechTextBuffer(async (payload) => {
-      const { speaker, text, fullText } = payload;
+      const { speaker, text, fullText, utteranceId } = payload;
       try {
         const result = await chrome.runtime.sendMessage({
           action:     ACTIONS.TRANSLATE,
@@ -553,19 +1654,34 @@
           return;
         }
 
+        const originalText = settings.showOriginal ? (fullText || text) : '';
+
+        // 1. Show immediate floating bottom subtitle card
         overlay.show({
           speaker,
           translatedText: result.translatedText,
-          originalText:   settings.showOriginal ? (fullText || text) : '',
+          originalText,
         });
+
+        // 2. Append or update in-place in real-time Live Transcript Sidebar
+        if (sidebar) {
+          sidebar.updateOrAddEntry({
+            utteranceId,
+            speaker,
+            translatedText: result.translatedText,
+            originalText,
+          });
+        }
       } catch (err) {
         console.error('[MeetLingo] Translation error:', err);
       }
     });
 
-    observer = new CaptionObserver((chunk) => buffer.push(chunk));
+    observer = Platform.isMSTeams()
+      ? new TeamsObserver((chunk) => buffer.push(chunk))
+      : new CaptionObserver((chunk) => buffer.push(chunk));
     observer.start();
-    console.debug('[MeetLingo] Pipeline started.');
+    console.debug('[MeetLingo] Pipeline started on:', Platform.isMSTeams() ? 'Microsoft Teams' : 'Google Meet');
   }
 
   function stopPipeline() {
@@ -574,6 +1690,7 @@
     if (observer) { observer.stop(); observer = null; }
     if (buffer)   { buffer.forceFlush(); buffer.reset(); buffer = null; }
     if (overlay)  { overlay.hide(); }
+    if (sidebar)  { sidebar.destroy(); sidebar = null; }
     console.debug('[MeetLingo] Pipeline stopped.');
   }
 
@@ -601,7 +1718,36 @@
     if (overlay) overlay.destroy();
   });
 
-  // Start
+  // ── SPA Navigation Watcher (critical for Teams — URL may NOT change between home and meeting) ──
+  if (Platform.isMSTeams()) {
+    let _callDetectTimer = null;
+    let _wasInCall = false;
+
+    // Poll every 2s for the hangup button — this is the ONLY reliable in-call signal on Teams
+    // Teams is a React SPA; the URL often stays at teams.microsoft.com/v2/ throughout a call
+    _callDetectTimer = setInterval(() => {
+      const hangup = document.querySelector(
+        '[data-tid="hangup-button"], button[aria-label*="Leave" i][data-tid], button[aria-label*="Hang up" i]'
+      );
+      const isInCall = !!(hangup && hangup.offsetWidth > 0);
+
+      if (isInCall && !_wasInCall) {
+        // Just entered a call
+        _wasInCall = true;
+        console.debug('[MeetLingo/Teams] Call detected — starting pipeline in 2s...');
+        setTimeout(() => {
+          if (settings?.enabled !== false) startPipeline();
+        }, 2000);
+      } else if (!isInCall && _wasInCall) {
+        // Just left a call
+        _wasInCall = false;
+        console.debug('[MeetLingo/Teams] Call ended — stopping pipeline.');
+        stopPipeline();
+      }
+    }, 2000);
+  }
+
+  // Start (Google Meet starts immediately; Teams uses the call-presence poller above)
   bootstrap();
 
 })();

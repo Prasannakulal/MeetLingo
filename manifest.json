@@ -1,14 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "MeetLingo – Real-Time Google Meet Translator",
-  "version": "1.0.0",
-  "description": "Real-time multilingual live translation overlay for Google Meet video calls. Powered by DeepL & Google Translate.",
+  "name": "MeetLingo – Real-Time Meeting Translator",
+  "version": "1.1.0",
+  "description": "Real-time multilingual translation for Google Meet and Microsoft Teams. Powered by DeepL & Google Translate.",
   "permissions": [
     "storage",
     "activeTab"
   ],
   "host_permissions": [
     "https://meet.google.com/*",
+    "https://teams.microsoft.com/*",
+    "https://teams.live.com/*",
     "https://api-free.deepl.com/*",
     "https://api.deepl.com/*",
     "https://translation.googleapis.com/*"
@@ -23,6 +25,13 @@
       "js": ["src/content/content-bundle.js"],
       "css": [],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://teams.microsoft.com/*", "https://teams.live.com/*"],
+      "js": ["src/content/content-bundle.js"],
+      "css": [],
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "action": {
