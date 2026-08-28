@@ -1,0 +1,34 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build output
+dist/
+build/
+*.zip
+
+# Environment / secrets (never commit real API keys)
+.env
+.env.local
+.env.*.local
+config.local.js
+
+# IDE / Editor
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Scratch/internal files
+scratch/
+MEETLINGO_PROJECT_DOCS.md
+google_meet_realtime_translation_extension_plan.md
