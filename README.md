@@ -1,7 +1,10 @@
 # MeetLingo - Real-Time Meeting Translator
 
-[![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-4885C2?style=for-the-badge&logo=google-chrome&logoColor=white)](https://chrome.google.com/webstore/detail/meetl1ngo/plkkbgdfhmhmppddcjjbngljdpncpndk)
-[![Microsoft Edge Add-ons](https://img.shields.io/badge/Microsoft%20Edge-0078D4?style=for-the-badge&logo=microsoft-edge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/meetl1ngo/mjnnljndnbpcdpnmkknhdfokpobpnbhh)
+![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-1.1.0-blue?style=for-the-badge)
+![Manifest](https://img.shields.io/badge/Manifest-V3-orange?style=for-the-badge)
+[![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-Coming%20Soon-lightgrey?style=for-the-badge&logo=google-chrome&logoColor=white)](#)
+[![Microsoft Edge Add-ons](https://img.shields.io/badge/Microsoft%20Edge-Coming%20Soon-lightgrey?style=for-the-badge&logo=microsoft-edge&logoColor=white)](#)
 
 MeetLingo is an AI-powered Chrome extension that provides real-time, multilingual translation for Google Meet and Microsoft Teams. Break down language barriers with instant captions and translated subtitles appearing directly in your video conferencing interface.
 
@@ -32,27 +35,24 @@ MeetLingo is an AI-powered Chrome extension that provides real-time, multilingua
 
 ## 🛠️ Installation
 
-### For Google Chrome
-
-1. Open Chrome and navigate to [Chrome Web Store](https://chrome.google.com/webstore)
-2. Search for "MeetLingo - Real-Time Meeting Translator"
-3. Click "Add to Chrome"
-4. Click "Add extension" to confirm
-
-### For Microsoft Edge
-
-1. Open Edge and navigate to [Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons)
-2. Search for "MeetLingo - Real-Time Meeting Translator"
-3. Click "Get"
-4. Click "Add extension" to confirm
+> 🚧 **Chrome Web Store & Microsoft Edge Add-ons listings are coming soon!**  
+> In the meantime, install manually using Developer Mode below.
 
 ### Manual Installation (Developer Mode)
 
-1. Download or clone the repository
-2. Open Chrome/Edge and navigate to `chrome://extensions` (Chrome) or `edge://extensions` (Edge)
-3. Enable "Developer mode" using the toggle in the top-right corner
-4. Click "Load unpacked"
-5. Select the `src` folder in the downloaded repository
+**Chrome:**
+1. [Download or clone this repository](https://github.com/Prasannakulal/MeetLingo)
+2. Open Chrome and navigate to `chrome://extensions`
+3. Enable **"Developer mode"** (toggle in the top-right corner)
+4. Click **"Load unpacked"**
+5. Select the root folder of the downloaded repository
+
+**Microsoft Edge:**
+1. [Download or clone this repository](https://github.com/Prasannakulal/MeetLingo)
+2. Open Edge and navigate to `edge://extensions`
+3. Enable **"Developer mode"** (toggle in the left sidebar)
+4. Click **"Load unpacked"**
+5. Select the root folder of the downloaded repository
 
 ## ⚙️ Usage
 
